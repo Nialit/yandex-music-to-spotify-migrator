@@ -1,0 +1,18 @@
+# Credentials — never commit
+config.py
+.cache
+.spotify_token_cache
+
+# Data files (personal library + migration output)
+data/
+
+# Claude Code
+.claude/
+
+# Personal planning notes
+MIGRATION_PLAN.md
+
+# Python
+venv/
+__pycache__/
+*.pyc
