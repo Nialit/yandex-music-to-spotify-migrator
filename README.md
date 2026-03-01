@@ -168,6 +168,10 @@ Similarity is computed using **Levenshtein distance** with truncation handling (
 - `min(title_score, artist_score)` >= 0.7: automatically liked on Spotify
 - Below threshold: saved to `not_found` with top 5 candidates for manual resolution
 
+### Ordering
+
+Tracks are processed oldest-first so that the overall Spotify liked order mirrors Yandex (most recently liked on top). However, the Spotify `PUT /me/library` endpoint does not guarantee ordering within a single batch (up to 40 tracks) — tracks in the same batch may appear in arbitrary order. There is no API mechanism on this endpoint to control within-batch ordering.
+
 ### API search
 
 For tracks not pre-matched from the library, the tool searches Spotify with `track:TITLE artist:ARTIST`. If the artist name contains Cyrillic characters, it also tries a transliterated Latin variant.

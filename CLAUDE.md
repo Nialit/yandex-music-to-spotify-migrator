@@ -116,6 +116,8 @@ Imports matching functions from `matching.py` and client from `spotify_client.py
 
 **Cross-list resolution:** Pre-matching also checks `not_found` and `pending` entries — if the user liked a track on Spotify since the last run, it gets resolved automatically.
 
+**Ordering caveat:** Tracks are processed oldest-first so that the overall Spotify liked order mirrors Yandex. However, `PUT /me/library` does not guarantee ordering within a single batch (up to 40 tracks) — tracks in the same batch may appear in arbitrary order on Spotify. The Spotify API has no mechanism (like `timestamped_ids`) on this endpoint to control within-batch ordering.
+
 ### Playlist Sync (`playlist_sync.py`)
 
 Two-phase pipeline:
