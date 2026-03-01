@@ -467,6 +467,114 @@ def cmd_pending():
         log.info("No pending tracks to like.")
 
 
+def cmd_retry(artist_on_spotify=False):
+    """Re-search Spotify for all not_found tracks with broadened search.
+
+    First tries the standard track:+artist: query, then falls back to a
+    title-only search if no results. This catches cases where Spotify has
+    the track under a different artist spelling.
+
+    If artist_on_spotify is True, only retries tracks where the artist was
+    found on Spotify (artist_met_on_spotify flag)."""
+    all_not_found = load_json(NOT_FOUND_FILE, [])
+    found = load_json(FOUND_FILE, [])
+
+    if artist_on_spotify:
+        not_found = [e for e in all_not_found if e.get("artist_met_on_spotify")]
+        skipped = [e for e in all_not_found if not e.get("artist_met_on_spotify")]
+    else:
+        not_found = all_not_found
+        skipped = []
+
+    if not not_found:
+        log.info("No unmatched tracks to retry.")
+        return
+
+    label = f"{len(not_found)} tracks (artist on Spotify)" if artist_on_spotify else f"{len(not_found)} unmatched tracks"
+    log.info(f"Retrying {label}...")
+
+    newly_found = []
+    still_not_found = []
+
+    def do_search(title, artist):
+        """Search with artist, then fallback to title-only."""
+        best, candidates = search_track(sp, title, artist)
+        query_used = f"track:{title} artist:{artist}"
+        if not best:
+            # Fallback: title-only search (catches artist name mismatches)
+            from matching import spotify_search, score_items, CANDIDATES_TO_STORE
+            items = spotify_search(sp, f"track:{title}")
+            time.sleep(DELAY_BETWEEN_REQUESTS)
+            scored = score_items(items, title)
+            # Score artist similarity and rank by min(title, artist)
+            for c in scored:
+                a_score = similarity(normalize(artist), normalize(first_artist(c["spotify_artists"])))
+                c["artist_score"] = round(a_score, 3)
+            scored.sort(key=lambda c: min(c["title_score"], c.get("artist_score", 0)), reverse=True)
+            if scored:
+                best = scored[0]
+                candidates = scored[:CANDIDATES_TO_STORE]
+                query_used = f"track:{title} (title-only fallback)"
+        return best, candidates, query_used
+
+    for i, entry in enumerate(not_found):
+        artist = first_artist(entry["yandex_artists"])
+        idx = f"[{i+1}/{len(not_found)}]"
+        try:
+            best, candidates, query_used = do_search(entry["yandex_title"], artist)
+        except spotipy.exceptions.SpotifyException as e:
+            if e.http_status == 429:
+                retry_after = get_retry_after(e)
+                log.warning(f"{idx} Rate limited, waiting {retry_after}s...")
+                time.sleep(retry_after + 5)
+                try:
+                    best, candidates, query_used = do_search(entry["yandex_title"], artist)
+                except Exception:
+                    log.error(f"{idx} Still failing after retry. Saving progress and exiting.")
+                    still_not_found.append(entry)
+                    still_not_found.extend(not_found[i + 1:])
+                    break
+            else:
+                log.error(f"{idx} SKIP  Spotify error {e.http_status} | {artist} — {entry['yandex_title']}")
+                still_not_found.append(entry)
+                continue
+
+        title_ok = best and best["title_score"] >= TITLE_MATCH_THRESHOLD
+        artist_ok = best and best.get("artist_score", 1.0) >= TITLE_MATCH_THRESHOLD
+        if title_ok and artist_ok:
+            newly_found.append({
+                "yandex_title": entry["yandex_title"],
+                "yandex_artists": entry["yandex_artists"],
+                "yandex_id": entry["yandex_id"],
+                **best,
+            })
+            log.info(f"{idx} FOUND t={best['title_score']:.2f} a={best.get('artist_score', 1.0):.2f} → {best['spotify_name']} by {best['spotify_artists']} | {artist} — {entry['yandex_title']}")
+        else:
+            entry["candidates"] = candidates if candidates else entry.get("candidates", [])
+            if not best:
+                reason = "no_results"
+                log.info(f"{idx} MISS  no_results | {artist} — {entry['yandex_title']}")
+            else:
+                t_s = best['title_score']
+                a_s = best.get('artist_score', 1.0)
+                reason = f"score t={t_s:.2f} a={a_s:.2f}"
+                log.info(f"{idx} MISS  {reason} → {best['spotify_name']} by {best['spotify_artists']} | {artist} — {entry['yandex_title']}")
+            entry["reason"] = reason
+            still_not_found.append(entry)
+
+    if newly_found:
+        log.info(f"\nFound {len(newly_found)} new matches! Liking...")
+        save_pending(newly_found)
+        found, liked = flush_pending(found)
+        for nf in newly_found:
+            log.info(f"  + {nf['yandex_artists']} — {nf['yandex_title']} → {nf['spotify_name']}")
+    else:
+        log.info("\nNo new matches found.")
+
+    save_not_found(skipped + still_not_found)
+    log.info(f"Results: {len(newly_found)} newly matched, {len(still_not_found)} still unmatched")
+
+
 def cmd_stats():
     """Print current migration statistics. Returns remaining count."""
     all_tracks = load_json(f"{DATA_DIR}/yandex_music_likes.json", [])
@@ -517,6 +625,8 @@ if __name__ == "__main__":
     parser.add_argument("--resolve", action="store_true", help="Manually resolve unmatched tracks using stored candidates")
     parser.add_argument("--pending", action="store_true", help="Like only pending tracks (no searching)")
     parser.add_argument("--stats", action="store_true", help="Print current migration statistics")
+    parser.add_argument("--retry", action="store_true", help="Re-search Spotify for all not_found tracks")
+    parser.add_argument("--artist-on-spotify", action="store_true", help="With --retry: only retry tracks whose artist exists on Spotify")
     parser.add_argument("--force-prematch", action="store_true", help="Refetch entire Spotify library for pre-matching (ignore early-stop)")
     args = parser.parse_args()
 
@@ -530,6 +640,8 @@ if __name__ == "__main__":
         cmd_resolve()
     elif args.pending:
         cmd_pending()
+    elif args.retry:
+        cmd_retry(artist_on_spotify=args.artist_on_spotify)
     elif args.stats:
         cmd_stats()
     else:

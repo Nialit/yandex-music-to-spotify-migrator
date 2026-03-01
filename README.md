@@ -65,6 +65,7 @@ The first positional argument selects what to migrate:
 | `liked` | Migrate liked tracks only (search + like on Spotify) |
 | `playlists` | Sync playlists only (match tracks + create/update Spotify playlists) |
 | `resolve` | Interactively resolve unmatched tracks — shows Spotify candidates and lets you pick the right one, mark as no match, or skip. Runs for both liked tracks and playlists |
+| `retry` | Re-search Spotify for all not_found tracks and auto-match any newly available results. Useful when Spotify's catalog changes |
 | `stats` | Show migration progress: matched/unmatched/pending counts for both liked tracks and playlists |
 | `pending` | Like previously matched tracks that are waiting in `spotify_pending.json` without doing any new searching |
 
@@ -74,6 +75,7 @@ The first positional argument selects what to migrate:
 |--------|-----------|-------------|
 | `--test` | `liked`, `playlists`, `all` | Test mode — limit to 10 tracks (liked) / first playlist (playlists). Use this for a dry-run before committing to a full migration |
 | `--filter-playlist NAME [NAME ...]` | `playlists`, `all` | Only sync playlists whose Yandex name matches one of the given names (exact match, case-sensitive). Accepts one or more space-separated names |
+| `--artist-on-spotify` | `retry` | Only retry tracks whose artist was found on Spotify. Skips tracks where the artist doesn't exist on Spotify at all |
 | `--force-prematch` | `liked`, `playlists`, `all` | Refetch your entire Spotify library for pre-matching instead of doing an incremental fetch. Useful if you've liked many tracks on Spotify since the last run |
 | `--sync` | `liked`, `playlists`, `all` | Fetch fresh data from Yandex Music before migrating. Requires `--token` |
 | `--token TOKEN` | `liked`, `playlists`, `all` | Yandex Music OAuth token (required with `--sync`). Can also be set via `YANDEX_MUSIC_TOKEN` env var |
@@ -101,6 +103,8 @@ The first positional argument selects what to migrate:
 ./migrate.sh playlists --sync --token TOKEN            # Fetch playlists from Yandex, then sync
 
 # --- Maintenance ---
+./migrate.sh retry                                     # Re-search Spotify for unmatched tracks
+./migrate.sh retry --artist-on-spotify                 # Retry only tracks whose artist exists on Spotify
 ./migrate.sh resolve                                   # Interactively resolve unmatched tracks
 ./migrate.sh stats                                     # Show migration progress
 ./migrate.sh pending                                   # Like pending matched tracks

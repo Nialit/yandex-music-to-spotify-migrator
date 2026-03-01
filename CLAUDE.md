@@ -49,6 +49,7 @@ migrate.sh <flow> [options]
 | `playlists` | Sync playlists only (match tracks + create/update Spotify playlists) |
 | `all` | Liked + playlists (liked runs first) |
 | `resolve` | Interactively resolve unmatched tracks (both liked + playlists) — shows candidates, pick/skip/mark no match |
+| `retry` | Re-search Spotify for all not_found tracks — useful when Spotify catalog changes or after fixing matching logic |
 | `stats` | Show migration progress (matched/unmatched/pending counts for both) |
 | `pending` | Like tracks in `spotify_pending.json` without new searching |
 
@@ -58,6 +59,7 @@ migrate.sh <flow> [options]
 |--------|-----------|-------------|
 | `--test` | `liked`, `playlists`, `all` | Test mode — 10 tracks (liked) / first playlist (playlists) |
 | `--filter-playlist NAME [NAME ...]` | `playlists`, `all` | Only sync playlists matching these Yandex names (exact, case-sensitive, space-separated) |
+| `--artist-on-spotify` | `retry` | Only retry tracks whose artist was found on Spotify |
 | `--force-prematch` | `liked`, `playlists`, `all` | Refetch entire Spotify library for pre-matching (instead of incremental) |
 | `--sync` | `liked`, `playlists`, `all` | Fetch fresh data from Yandex Music before migrating. Requires `--token` |
 | `--token TOKEN` | `liked`, `playlists`, `all` | Yandex Music OAuth token (required with `--sync`). Also reads `YANDEX_MUSIC_TOKEN` env var |
@@ -85,6 +87,8 @@ migrate.sh <flow> [options]
 ./migrate.sh playlists --sync --token TOKEN            # Fetch playlists from Yandex, then sync
 
 # --- Maintenance ---
+./migrate.sh retry                                     # Re-search Spotify for unmatched tracks
+./migrate.sh retry --artist-on-spotify                 # Retry only tracks whose artist exists on Spotify
 ./migrate.sh resolve                                   # Interactively resolve unmatched tracks
 ./migrate.sh stats                                     # Show migration progress
 ./migrate.sh pending                                   # Like pending matched tracks

@@ -36,18 +36,25 @@ def run(script, args):
 def main():
     reset_latest()
 
-    parser = argparse.ArgumentParser(
+    class HelpOnErrorParser(argparse.ArgumentParser):
+        def error(self, message):
+            self.print_help(sys.stderr)
+            sys.stderr.write(f"\nerror: {message}\n")
+            sys.exit(2)
+
+    parser = HelpOnErrorParser(
         description="Yandex Music → Spotify migration",
         usage="%(prog)s <flow> [options]",
     )
     parser.add_argument(
         "flow",
-        choices=["liked", "playlists", "all", "resolve", "stats", "pending"],
-        help="What to migrate: liked, playlists, all, resolve, stats, pending",
+        choices=["liked", "playlists", "all", "resolve", "retry", "stats", "pending"],
+        help="What to migrate: liked, playlists, all, resolve, retry, stats, pending",
     )
     parser.add_argument("--test", action="store_true", help="Limit to 10 tracks")
     parser.add_argument("--filter-playlist", nargs="+", metavar="NAME", help="Filter playlists by Yandex name")
     parser.add_argument("--force-prematch", action="store_true", help="Refetch entire Spotify library for pre-matching")
+    parser.add_argument("--artist-on-spotify", action="store_true", help="With retry: only retry tracks whose artist exists on Spotify")
     parser.add_argument("--sync", action="store_true", help="Fetch from Yandex first, then migrate")
     parser.add_argument("--token", help="Yandex Music OAuth token (for --sync)")
     args = parser.parse_args()
@@ -93,6 +100,12 @@ def main():
     elif args.flow == "resolve":
         run("spotify_crossref.py", ["--resolve"])
         run("playlist_sync.py", ["--resolve"])
+
+    elif args.flow == "retry":
+        retry_args = ["--retry"]
+        if args.artist_on_spotify:
+            retry_args.append("--artist-on-spotify")
+        run("spotify_crossref.py", retry_args)
 
     elif args.flow == "stats":
         run("spotify_crossref.py", ["--stats"])
