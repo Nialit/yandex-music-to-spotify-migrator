@@ -21,6 +21,8 @@ import argparse
 import unicodedata
 import os
 import tempfile
+import logging
+from logging.handlers import TimedRotatingFileHandler
 from difflib import SequenceMatcher
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
@@ -28,6 +30,32 @@ from config import CLIENT_ID, CLIENT_SECRET, REDIRECT_URI
 
 DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = f"{DIR}/data"
+LOG_DIR = f"{DIR}/logs"
+
+os.makedirs(LOG_DIR, exist_ok=True)
+
+log = logging.getLogger("spotify_crossref")
+log.setLevel(logging.DEBUG)
+
+_log_fmt = logging.Formatter("%(asctime)s %(levelname)-5s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+
+_console = logging.StreamHandler()
+_console.setLevel(logging.INFO)
+_console.setFormatter(logging.Formatter("%(message)s"))
+log.addHandler(_console)
+
+_latest = logging.FileHandler(f"{LOG_DIR}/latest.log", mode="w", encoding="utf-8")
+_latest.setLevel(logging.DEBUG)
+_latest.setFormatter(_log_fmt)
+log.addHandler(_latest)
+
+_daily = TimedRotatingFileHandler(
+    f"{LOG_DIR}/spotify_crossref.log", when="midnight", backupCount=0, encoding="utf-8",
+)
+_daily.setLevel(logging.DEBUG)
+_daily.setFormatter(_log_fmt)
+_daily.namer = lambda name: name.replace(".log.", ".") + ".log"
+log.addHandler(_daily)
 
 FOUND_FILE = f"{DATA_DIR}/spotify_found.json"
 NOT_FOUND_FILE = f"{DATA_DIR}/spotify_not_found.json"
@@ -45,7 +73,7 @@ try:
     HAS_TRANSLIT = True
 except ImportError:
     HAS_TRANSLIT = False
-    print("Note: transliterate not installed, skipping Cyrillic→Latin fallback searches")
+    log.info("Note: transliterate not installed, skipping Cyrillic→Latin fallback searches")
 
 import requests as _requests
 
@@ -167,7 +195,7 @@ def fetch_liked_songs(sp, existing_spotify_ids=None):
         except spotipy.exceptions.SpotifyException as e:
             if e.http_status == 429:
                 retry_after = get_retry_after(e)
-                print(f"  Rate limited fetching library, waiting {retry_after}s...")
+                log.warning(f"  Rate limited fetching library, waiting {retry_after}s...")
                 time.sleep(retry_after + 5)
                 continue
             raise
@@ -191,13 +219,13 @@ def fetch_liked_songs(sp, existing_spotify_ids=None):
         liked_songs.extend(page_songs)
 
         if len(liked_songs) % 500 < limit:
-            print(f"  Fetched {len(liked_songs)} liked songs...")
+            log.info(f"  Fetched {len(liked_songs)} liked songs...")
 
         # Early-stop: if most of this page is already known, we've reached synced territory
         if existing_spotify_ids and page_songs:
             known = sum(1 for s in page_songs if s["spotify_id"] in existing_spotify_ids)
             if known / len(page_songs) >= 0.9:
-                print(f"  Early stop: reached previously synced tracks ({known}/{len(page_songs)} known on this page)")
+                log.info(f"  Early stop: reached previously synced tracks ({known}/{len(page_songs)} known on this page)")
                 break
 
         if not results.get("next"):
@@ -205,7 +233,7 @@ def fetch_liked_songs(sp, existing_spotify_ids=None):
         offset += limit
         time.sleep(DELAY_BETWEEN_REQUESTS)
 
-    print(f"  Fetched {len(liked_songs)} liked songs total.")
+    log.info(f"  Fetched {len(liked_songs)} liked songs total.")
     return liked_songs
 
 
@@ -507,7 +535,7 @@ def flush_pending(found):
     if not pending:
         return found, 0
 
-    print(f"Liking {len(pending)} pending tracks...")
+    log.info(f"Liking {len(pending)} pending tracks...")
     liked = 0
     for chunk_start in range(0, len(pending), LIKE_BATCH_SIZE):
         chunk = pending[chunk_start:chunk_start + LIKE_BATCH_SIZE]
@@ -518,33 +546,33 @@ def flush_pending(found):
             if e.http_status == 429:
                 retry_after = get_retry_after(e)
                 if retry_after > 60:
-                    print(f"  → rate limited ({retry_after}s), saving and exiting.")
+                    log.warning(f"  → rate limited ({retry_after}s), saving and exiting.")
                     save_pending(pending[chunk_start:])
                     save_found(found)
                     return found, liked
-                print(f"  → rate limited, waiting {retry_after}s...")
+                log.warning(f"  → rate limited, waiting {retry_after}s...")
                 time.sleep(retry_after + 5)
                 try:
                     like_tracks(ids)
                 except Exception:
-                    print(f"  → still failing. {liked} liked, {len(pending) - liked} remain.")
+                    log.error(f"  → still failing. {liked} liked, {len(pending) - liked} remain.")
                     save_pending(pending[chunk_start:])
                     save_found(found)
                     return found, liked
             elif e.http_status == 403:
-                print(f"\n*** 403 Forbidden. Pending {len(pending) - liked} tracks saved to disk. ***")
-                print("Likely Spotify Development Mode write rate limit.")
+                log.error(f"*** 403 Forbidden. Pending {len(pending) - liked} tracks saved to disk. ***")
+                log.error("Likely Spotify Development Mode write rate limit.")
                 save_pending(pending[chunk_start:])
                 save_found(found)
                 return found, liked
             else:
-                print(f"  → error {e.http_status}. {liked} liked, {len(pending) - liked} remain.")
+                log.error(f"  → error {e.http_status}. {liked} liked, {len(pending) - liked} remain.")
                 save_pending(pending[chunk_start:])
                 save_found(found)
                 return found, liked
         found.extend(chunk)
         liked += len(chunk)
-        print(f"  → liked {len(chunk)} tracks (total: {liked}/{len(pending)})")
+        log.info(f"  → liked {len(chunk)} tracks (total: {liked}/{len(pending)})")
         time.sleep(DELAY_AFTER_LIKE)
 
     clear_pending()
@@ -570,7 +598,7 @@ def cmd_migrate(test_mode, force_prematch=False):
         else:
             break  # flush returned 0 — stuck on error, stop retrying
     if total_recovered:
-        print(f"Recovered {total_recovered} pending likes from previous run.")
+        log.info(f"Recovered {total_recovered} pending likes from previous run.")
 
     pending_on_disk = load_json(PENDING_FILE, [])
     done_ids = set(e["yandex_id"] for e in found) | set(e["yandex_id"] for e in not_found) | set(e["yandex_id"] for e in pending_on_disk)
@@ -581,7 +609,7 @@ def cmd_migrate(test_mode, force_prematch=False):
 
     # --- Pre-match against existing Spotify library ---
     if remaining or not_found or pending_on_disk:
-        print("Fetching Spotify liked songs for pre-matching...")
+        log.info("Fetching Spotify liked songs for pre-matching...")
         existing_spotify_ids = None
         if found and not force_prematch:
             existing_spotify_ids = {e["spotify_id"] for e in found if e.get("spotify_id")}
@@ -590,7 +618,7 @@ def cmd_migrate(test_mode, force_prematch=False):
         if liked_songs:
             new_songs = [s for s in liked_songs if s["spotify_id"] not in (existing_spotify_ids or set())]
             if existing_spotify_ids:
-                print(f"  {len(new_songs)} new tracks in Spotify library since last sync.")
+                log.info(f"  {len(new_songs)} new tracks in Spotify library since last sync.")
 
             title_index, artist_index = build_library_index(liked_songs)
 
@@ -641,20 +669,20 @@ def cmd_migrate(test_mode, force_prematch=False):
                     parts.append(f"{len(prematched_not_found)} from not_found")
                 if prematched_pending:
                     parts.append(f"{len(prematched_pending)} from pending")
-                print(f"Pre-matched {total_prematched} tracks from existing library ({', '.join(parts)}).")
+                log.info(f"Pre-matched {total_prematched} tracks from existing library ({', '.join(parts)}).")
                 if remaining:
-                    print(f"  {len(remaining)} remaining to search.")
+                    log.info(f"  {len(remaining)} remaining to search.")
             else:
-                print("No pre-matches found in existing library.")
+                log.info("No pre-matches found in existing library.")
         else:
-            print("No liked songs in Spotify library (or fetch returned empty).")
+            log.info("No liked songs in Spotify library (or fetch returned empty).")
 
     if len(all_tracks) - len(remaining) > 0:
-        print(f"Resuming: {len(all_tracks) - len(remaining)} already processed, {len(remaining)} remaining")
+        log.info(f"Resuming: {len(all_tracks) - len(remaining)} already processed, {len(remaining)} remaining")
 
     if test_mode:
         remaining = remaining[:10]
-        print(f"\n*** TEST MODE: processing up to 10 tracks ***\n")
+        log.info("*** TEST MODE: processing up to 10 tracks ***")
 
     pending_likes = []
 
@@ -683,23 +711,23 @@ def cmd_migrate(test_mode, force_prematch=False):
                 if e.http_status == 429:
                     retry_after = get_retry_after(e)
                     if retry_after > 60:
-                        print(f"\n*** Rate limited ({retry_after}s). Flushing pending and exiting. ***")
+                        log.error(f"*** Rate limited ({retry_after}s). Flushing pending and exiting. ***")
                         flush()
                         save_not_found(not_found)
                         sys.exit(1)
-                    print(f"\n*** Rate limited on search! Flushing, saving and waiting {retry_after}s ***")
+                    log.warning(f"*** Rate limited on search! Flushing, saving and waiting {retry_after}s ***")
                     flush()
                     save_not_found(not_found)
                     time.sleep(retry_after + 5)
                     try:
                         best, candidates = search_track(t["title"], artist)
                     except Exception:
-                        print("*** Still failing after retry, saving and exiting. Run again to resume. ***")
+                        log.error("*** Still failing after retry, saving and exiting. Run again to resume. ***")
                         save_pending(pending_likes)
                         save_not_found(not_found)
                         sys.exit(1)
                 else:
-                    print(f"  Spotify error: {e}")
+                    log.error(f"  Spotify error: {e}")
                     not_found.append({
                         "yandex_title": t["title"], "yandex_artists": t["artists"],
                         "yandex_id": t["id"], "reason": "api_error", "candidates": [],
@@ -728,17 +756,17 @@ def cmd_migrate(test_mode, force_prematch=False):
             liked = len(found) + len(pending_likes)
             total_done = liked + len(not_found)
             pct = 100 * liked / total_done if total_done else 0
-            print(f"[{global_idx}/{len(all_tracks)}] {status} | {artist} — {t['title']}  ({liked} liked, {pct:.0f}%)")
+            log.info(f"[{global_idx}/{len(all_tracks)}] {status} | {artist} — {t['title']}  ({liked} liked, {pct:.0f}%)")
 
     except KeyboardInterrupt:
-        print(f"\n\n*** Interrupted! Flushing {len(pending_likes)} pending likes and saving progress... ***")
+        log.warning(f"*** Interrupted! Flushing {len(pending_likes)} pending likes and saving progress... ***")
         try:
             flush()
         except Exception as e:
-            print(f"  → flush failed ({e}), saving pending to disk for next run")
+            log.error(f"  → flush failed ({e}), saving pending to disk for next run")
             save_pending(pending_likes)
         save_not_found(not_found)
-        print(f"Saved: {len(found)} found, {len(not_found)} not found. Run again to resume.")
+        log.info(f"Saved: {len(found)} found, {len(not_found)} not found. Run again to resume.")
         sys.exit(0)
 
     flush()  # send any remaining pending likes
@@ -749,18 +777,18 @@ def cmd_migrate(test_mode, force_prematch=False):
 
     total = len(found) + len(not_found)
     pct = 100 * len(found) / total if total else 0
-    print(f"\n=== RESULTS ===")
-    print(f"Total Yandex tracks: {len(all_tracks)}")
-    print(f"Processed:           {total}")
-    print(f"Found & liked:       {len(found)} ({pct:.1f}%)")
-    print(f"Not found:           {len(not_found)}")
+    log.info("=== RESULTS ===")
+    log.info(f"Total Yandex tracks: {len(all_tracks)}")
+    log.info(f"Processed:           {total}")
+    log.info(f"Found & liked:       {len(found)} ({pct:.1f}%)")
+    log.info(f"Not found:           {len(not_found)}")
     if not_found:
         with_candidates = sum(1 for e in not_found if e.get("candidates"))
-        print(f"  → {with_candidates} have Spotify candidates for manual resolution")
-        print(f"  → run --resolve to pick manually (no re-fetching needed)")
+        log.info(f"  → {with_candidates} have Spotify candidates for manual resolution")
+        log.info(f"  → run --resolve to pick manually (no re-fetching needed)")
 
     if test_mode:
-        print(f"\n*** TEST COMPLETE — check Spotify Liked Songs, then run --full ***")
+        log.info("*** TEST COMPLETE — check Spotify Liked Songs, then run --full ***")
 
 
 def cmd_resolve():
@@ -796,7 +824,7 @@ def cmd_resolve():
             continue
         elif choice == "n":
             entry["candidates"] = []
-            print("  → marked as no match")
+            log.info(f"  → marked as no match: {entry['yandex_artists']} — {entry['yandex_title']}")
         elif choice.isdigit() and int(choice) < len(entry["candidates"]):
             picked = entry["candidates"][int(choice)]
             try:
@@ -814,9 +842,9 @@ def cmd_resolve():
                 })
                 # Remove this entry from not_found
                 not_found = [e for e in not_found if e["yandex_id"] != entry["yandex_id"]]
-                print(f"  → liked: {picked['spotify_name']}")
+                log.info(f"  → liked: {picked['spotify_name']}")
             except Exception as e:
-                print(f"  → ERROR liking track: {e}")
+                log.error(f"  → ERROR liking track: {e}")
                 continue
         else:
             print("  → skipped (invalid input)")
@@ -826,10 +854,10 @@ def cmd_resolve():
         save_found(found)
         save_not_found(not_found)
 
-    print(f"\nTotal liked: {len(found)}")
+    log.info(f"Total liked: {len(found)}")
     remaining_resolvable = sum(1 for e in not_found if e.get("candidates"))
-    print(f"Remaining with candidates: {remaining_resolvable}")
-    print(f"Remaining without candidates: {len(not_found) - remaining_resolvable}")
+    log.info(f"Remaining with candidates: {remaining_resolvable}")
+    log.info(f"Remaining without candidates: {len(not_found) - remaining_resolvable}")
 
 
 def cmd_pending():
@@ -837,9 +865,9 @@ def cmd_pending():
     found = load_json(FOUND_FILE, [])
     found, liked = flush_pending(found)
     if liked:
-        print(f"\nDone! Total liked: {len(found)}")
+        log.info(f"Done! Total liked: {len(found)}")
     else:
-        print("No pending tracks to like.")
+        log.info("No pending tracks to like.")
 
 
 def cmd_stats():
@@ -866,12 +894,12 @@ def cmd_stats():
     processed = len(found) + len(pending) + len(not_found)
     overlap_pct = 100 * (len(found) + len(pending)) / processed if processed else 0
 
-    print(f"Total Yandex tracks:  {total}")
-    print(f"Found & liked:        {len(found)} ({pct:.1f}%)")
-    print(f"Not found:            {len(not_found)} ({with_candidates} with candidates)")
-    print(f"Pending:              {len(pending)}")
-    print(f"Finding overlap:      {overlap_pct:.1f}%")
-    print(f"Remaining to process: {remaining}")
+    log.info(f"Total Yandex tracks:  {total}")
+    log.info(f"Found & liked:        {len(found)} ({pct:.1f}%)")
+    log.info(f"Not found:            {len(not_found)} ({with_candidates} with candidates)")
+    log.info(f"Pending:              {len(pending)}")
+    log.info(f"Finding overlap:      {overlap_pct:.1f}%")
+    log.info(f"Remaining to process: {remaining}")
     if not_on_spotify:
         artist_counts = []
         for a in not_on_spotify:
@@ -879,32 +907,32 @@ def cmd_stats():
                         if first_artist(e.get("yandex_artists", "")) == a)
             artist_counts.append((a, count))
         artist_counts.sort(key=lambda x: x[1], reverse=True)
-        print(f"\nArtists not found on Spotify ({len(not_on_spotify)}):")
+        log.info(f"Artists not found on Spotify ({len(not_on_spotify)}):")
         for a, count in artist_counts:
-            print(f"  {a} ({count})")
+            log.info(f"  {a} ({count})")
     return remaining
 
 
 def cmd_full_sync(yandex_token):
     """Full pipeline: fetch from Yandex, print stats, migrate if tracks remain."""
     import subprocess
-    print("=== Fetching from Yandex Music ===\n")
+    log.info("=== Fetching from Yandex Music ===")
     result = subprocess.run(
         [sys.executable, f"{DIR}/yandex_fetch.py", "--token", yandex_token],
         cwd=DIR,
     )
     if result.returncode != 0:
-        print("\n*** Yandex fetch failed, aborting. ***")
+        log.error("*** Yandex fetch failed, aborting. ***")
         sys.exit(1)
 
-    print(f"\n=== Migration Stats ===\n")
+    log.info("=== Migration Stats ===")
     remaining = cmd_stats()
 
     if remaining > 0:
-        print(f"\n=== Migrating {remaining} tracks to Spotify ===\n")
+        log.info(f"=== Migrating {remaining} tracks to Spotify ===")
         cmd_migrate(test_mode=False)
     else:
-        print("\nAll tracks already processed.")
+        log.info("All tracks already processed.")
 
 
 if __name__ == "__main__":
@@ -928,8 +956,8 @@ if __name__ == "__main__":
     elif args.full_sync:
         token = args.token or os.environ.get("YANDEX_MUSIC_TOKEN")
         if not token:
-            print("Error: --token is required for --full-sync")
-            print("  python3 spotify_crossref.py --full-sync --token YOUR_TOKEN")
+            log.error("Error: --token is required for --full-sync")
+            log.error("  python3 spotify_crossref.py --full-sync --token YOUR_TOKEN")
             sys.exit(1)
         cmd_full_sync(token)
     elif args.resolve:

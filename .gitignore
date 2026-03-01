@@ -12,6 +12,9 @@ data/
 # Personal planning notes
 MIGRATION_PLAN.md
 
+# Logs
+logs/
+
 # Python
 venv/
 __pycache__/

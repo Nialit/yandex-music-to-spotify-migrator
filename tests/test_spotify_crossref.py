@@ -364,11 +364,12 @@ class TestCmdMigrate:
     def _write_yandex(self, tmp_path, tracks):
         write_json(str(tmp_path / "yandex_music_likes.json"), tracks)
 
+    @patch.object(sc, "fetch_liked_songs", return_value=[])
     @patch.object(sc, "flush_pending", return_value=([], 0))
     @patch.object(sc, "search_track")
     @patch.object(sc, "DELAY_BETWEEN_REQUESTS", 0)
     @patch.object(sc, "DELAY_BETWEEN_BATCHES", 0)
-    def test_test_mode_limits_to_10(self, mock_search, mock_flush, tmp_path):
+    def test_test_mode_limits_to_10(self, mock_search, mock_flush, mock_fetch, tmp_path):
         self._setup_paths(tmp_path)
         tracks = [{"title": f"Song {i}", "artists": f"Artist {i}", "id": str(i)} for i in range(20)]
         self._write_yandex(tmp_path, tracks)
@@ -380,10 +381,11 @@ class TestCmdMigrate:
         sc.cmd_migrate(test_mode=True)
         assert mock_search.call_count == 10
 
+    @patch.object(sc, "fetch_liked_songs", return_value=[])
     @patch.object(sc, "flush_pending")
     @patch.object(sc, "search_track")
     @patch.object(sc, "DELAY_BETWEEN_REQUESTS", 0)
-    def test_matched_track_goes_to_pending(self, mock_search, mock_flush, tmp_path):
+    def test_matched_track_goes_to_pending(self, mock_search, mock_flush, mock_fetch, tmp_path):
         self._setup_paths(tmp_path)
         tracks = [{"title": "Yesterday", "artists": "Beatles", "id": "1"}]
         self._write_yandex(tmp_path, tracks)
@@ -407,10 +409,11 @@ class TestCmdMigrate:
         # flush_pending called from inner flush() at end
         assert mock_flush.call_count >= 1
 
+    @patch.object(sc, "fetch_liked_songs", return_value=[])
     @patch.object(sc, "flush_pending", return_value=([], 0))
     @patch.object(sc, "search_track")
     @patch.object(sc, "DELAY_BETWEEN_REQUESTS", 0)
-    def test_unmatched_goes_to_not_found(self, mock_search, mock_flush, tmp_path):
+    def test_unmatched_goes_to_not_found(self, mock_search, mock_flush, mock_fetch, tmp_path):
         self._setup_paths(tmp_path)
         tracks = [{"title": "Unknown Song", "artists": "Nobody", "id": "1"}]
         self._write_yandex(tmp_path, tracks)
@@ -424,10 +427,11 @@ class TestCmdMigrate:
         assert not_found[0]["yandex_id"] == "1"
         assert not_found[0]["reason"] == "no_results"
 
+    @patch.object(sc, "fetch_liked_songs", return_value=[])
     @patch.object(sc, "flush_pending")
     @patch.object(sc, "search_track")
     @patch.object(sc, "DELAY_BETWEEN_REQUESTS", 0)
-    def test_skips_already_processed(self, mock_search, mock_flush, tmp_path):
+    def test_skips_already_processed(self, mock_search, mock_flush, mock_fetch, tmp_path):
         self._setup_paths(tmp_path)
         tracks = [{"title": "Song", "artists": "Artist", "id": "1"}]
         self._write_yandex(tmp_path, tracks)
