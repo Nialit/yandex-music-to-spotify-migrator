@@ -9,6 +9,7 @@ Tracks that also appear in yandex_music_likes.json are automatically liked on Sp
 Usage:
   python3 playlist_sync.py --test              # First playlist only
   python3 playlist_sync.py --full              # All playlists
+  python3 playlist_sync.py --full --filter-playlist "Rock" --filter-playlist "Jazz"  # Only matching playlists
   python3 playlist_sync.py --resolve           # Manual resolution for unmatched
   python3 playlist_sync.py --stats             # Show sync status
 """
@@ -430,12 +431,29 @@ def sync_playlists(playlists, pool, test_mode=False):
 
 # --- Commands ---
 
-def cmd_sync(test_mode=False):
+def filter_playlists(playlists, names):
+    """Filter playlists by exact name match. Returns filtered list."""
+    filtered = [pl for pl in playlists if pl["name"] in names]
+    found_names = {pl["name"] for pl in filtered}
+    for name in names:
+        if name not in found_names:
+            log.warning(f"  Filter: no playlist named '{name}' found")
+    return filtered
+
+
+def cmd_sync(test_mode=False, filter_names=None):
     """Match all playlist tracks and sync playlists to Spotify."""
     playlists = load_json(YANDEX_PLAYLISTS_FILE, [])
     if not playlists:
         log.error(f"No playlists found. Run: python3 yandex_fetch.py --playlists --token TOKEN")
         sys.exit(1)
+
+    if filter_names:
+        playlists = filter_playlists(playlists, filter_names)
+        if not playlists:
+            log.error("No playlists matched the filter.")
+            sys.exit(1)
+        log.info(f"Filtered to {len(playlists)} playlist(s): {', '.join(pl['name'] for pl in playlists)}")
 
     if test_mode:
         log.info(f"*** TEST MODE ***")
@@ -553,21 +571,23 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Sync Yandex playlists to Spotify")
     parser.add_argument("--test", action="store_true", help="Test with first playlist only")
     parser.add_argument("--full", action="store_true", help="Sync all playlists")
+    parser.add_argument("--filter-playlist", action="append", metavar="NAME", help="Only sync playlists matching this name (exact match, repeatable)")
     parser.add_argument("--resolve", action="store_true", help="Manually resolve unmatched tracks")
     parser.add_argument("--stats", action="store_true", help="Show sync status")
     args = parser.parse_args()
 
     if args.test:
-        cmd_sync(test_mode=True)
+        cmd_sync(test_mode=True, filter_names=args.filter_playlist)
     elif args.full:
-        cmd_sync(test_mode=False)
+        cmd_sync(test_mode=False, filter_names=args.filter_playlist)
     elif args.resolve:
         cmd_resolve()
     elif args.stats:
         cmd_stats()
     else:
         print("Usage:")
-        print("  python3 playlist_sync.py --test     # Test with first playlist")
-        print("  python3 playlist_sync.py --full     # Sync all playlists")
-        print("  python3 playlist_sync.py --resolve  # Manually resolve unmatched tracks")
-        print("  python3 playlist_sync.py --stats    # Show sync status")
+        print("  python3 playlist_sync.py --test                                    # Test with first playlist")
+        print("  python3 playlist_sync.py --full                                    # Sync all playlists")
+        print("  python3 playlist_sync.py --full --filter-playlist 'My Playlist'    # Sync specific playlist(s)")
+        print("  python3 playlist_sync.py --resolve                                 # Manually resolve unmatched tracks")
+        print("  python3 playlist_sync.py --stats                                   # Show sync status")

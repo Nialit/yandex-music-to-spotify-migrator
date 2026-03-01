@@ -24,56 +24,44 @@ Spotify OAuth credentials are stored in `config.py`. The `.spotify_token_cache` 
 
 | Module | Purpose |
 |--------|---------|
+| `migrate.py` | Unified CLI orchestrator — routes to the right scripts |
 | `matching.py` | Pure matching functions: normalization, Levenshtein similarity, transliteration, library indexing, pre-matching, Spotify search/scoring |
 | `spotify_client.py` | Shared Spotify OAuth client setup with configurable scopes |
 | `spotify_crossref.py` | Liked tracks migration (search, resolve, pending, stats) |
-| `playlist_sync.py` | Playlist migration (match, sync, resolve, stats) |
+| `playlist_sync.py` | Playlist migration (match, sync, resolve, stats). Supports `--filter-playlist NAME` for exact name filtering |
 | `yandex_fetch.py` | Fetch liked tracks and playlists from Yandex Music |
 
-## Liked Tracks Migration
+## CLI (via migrate.py / migrate.sh / migrate.bat)
 
 ```bash
-# Step 1: Test on 10 tracks (prematch runs first, then searches remainder)
-python3 spotify_crossref.py --test
+# Everything: fetch from Yandex + migrate likes + sync playlists
+./migrate.sh --full-sync --token TOKEN
 
-# Step 2: Full migration (resumable — safe to re-run after interruption)
-python3 spotify_crossref.py --full
+# Likes + playlists (no Yandex fetch)
+./migrate.sh --full
 
-# Step 3: Manually resolve unmatched tracks (no re-fetching needed)
-python3 spotify_crossref.py --resolve
+# Likes only
+./migrate.sh --full --no-playlists
 
-# Optional: force full library rescan (e.g. after manually liking tracks on Spotify)
-python3 spotify_crossref.py --full --force-prematch
-```
+# Playlists only
+./migrate.sh playlist --full
 
-## Playlist Migration
+# Specific playlists by name
+./migrate.sh playlist --full --filter-playlist "Rock Classics"
 
-```bash
-# Step 1: Fetch playlists from Yandex Music
-python3 yandex_fetch.py --playlists --token YOUR_TOKEN
+# Test mode
+./migrate.sh --test
 
-# Step 2: Test sync with first playlist only
-python3 playlist_sync.py --test
+# Resolve unmatched
+./migrate.sh --resolve
 
-# Step 3: Full sync — match tracks, cross-like, create/update Spotify playlists
-python3 playlist_sync.py --full
-
-# Step 4: Manually resolve unmatched playlist tracks
-python3 playlist_sync.py --resolve
-
-# Check status
-python3 playlist_sync.py --stats
+# Stats
+./migrate.sh --stats
 ```
 
 **Add-only by design:** playlist sync never removes tracks from Spotify playlists. If you need to remove tracks, do it manually in Spotify.
 
 **Cross-liking:** Playlist tracks that also appear in `yandex_music_likes.json` are automatically liked on Spotify during sync.
-
-## Full Sync (both likes + playlists)
-
-```bash
-python3 spotify_crossref.py --full-sync --token YOUR_TOKEN --playlists
-```
 
 `artist_mapper.py` is obsolete and can be deleted.
 
@@ -153,3 +141,5 @@ All scripts respect Spotify API rate limits with automatic retry on 429 response
 Squash commits before pushing. Before pushing, always double-check that no confidential data (tokens, secrets, client IDs, personal data) is leaked in the commit.
 
 When working with external APIs (Spotify, Yandex Music, etc.), always check the official documentation first as the source of truth. Do not guess how an API works — fetch and read the actual docs before writing or debugging API calls.
+
+**Always update README.md** when making substantial changes (new features, changed CLI flags, new data files, architectural changes). Keep it in sync with CLAUDE.md — README.md is user-facing, CLAUDE.md is for the AI assistant.

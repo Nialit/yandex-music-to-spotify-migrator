@@ -343,3 +343,27 @@ class TestCmdStats:
 
         # Should not raise
         ps.cmd_stats()
+
+
+# ---------------------------------------------------------------------------
+# filter_playlists()
+# ---------------------------------------------------------------------------
+
+class TestFilterPlaylists:
+    def test_filters_by_exact_name(self):
+        pl1 = make_playlist("1", "Rock", [("Song", "Artist", "100")])
+        pl2 = make_playlist("2", "Jazz", [("Song", "Artist", "200")])
+        pl3 = make_playlist("3", "Pop", [("Song", "Artist", "300")])
+        result = ps.filter_playlists([pl1, pl2, pl3], ["Rock", "Jazz"])
+        assert len(result) == 2
+        assert {p["name"] for p in result} == {"Rock", "Jazz"}
+
+    def test_no_match_returns_empty(self):
+        pl1 = make_playlist("1", "Rock", [("Song", "Artist", "100")])
+        result = ps.filter_playlists([pl1], ["Nonexistent"])
+        assert result == []
+
+    def test_partial_name_does_not_match(self):
+        pl1 = make_playlist("1", "Rock Classics", [("Song", "Artist", "100")])
+        result = ps.filter_playlists([pl1], ["Rock"])
+        assert result == []

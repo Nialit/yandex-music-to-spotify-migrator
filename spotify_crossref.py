@@ -1,9 +1,8 @@
 """
-Migrate Yandex Music liked tracks to Spotify Liked Songs.
+Liked tracks migration engine: Yandex Music → Spotify.
 
-Searches Spotify directly for each track — no pre-built artist mappings needed.
-Scoring handles Cyrillic→Latin transliteration automatically.
-Unmatched tracks are saved with Spotify candidates (including IDs) for manual resolution.
+Prefer using migrate.py (or migrate.sh) as the main entry point.
+This script can also be called directly for liked-tracks-only operations.
 
 Usage:
   python3 spotify_crossref.py --test     # Test on first 10 unprocessed tracks
@@ -538,49 +537,14 @@ def cmd_stats():
     return remaining
 
 
-def cmd_full_sync(yandex_token, include_playlists=False):
-    """Full pipeline: fetch from Yandex, print stats, migrate if tracks remain."""
-    import subprocess
-    log.info("=== Fetching from Yandex Music ===")
-    fetch_args = [sys.executable, f"{DIR}/yandex_fetch.py", "--token", yandex_token]
-    if include_playlists:
-        fetch_args.append("--playlists")
-    result = subprocess.run(fetch_args, cwd=DIR)
-    if result.returncode != 0:
-        log.error("*** Yandex fetch failed, aborting. ***")
-        sys.exit(1)
-
-    log.info("=== Migration Stats ===")
-    remaining = cmd_stats()
-
-    if remaining > 0:
-        log.info(f"=== Migrating {remaining} tracks to Spotify ===")
-        cmd_migrate(test_mode=False)
-    else:
-        log.info("All tracks already processed.")
-
-    if include_playlists:
-        log.info("=== Syncing playlists ===")
-        result = subprocess.run(
-            [sys.executable, f"{DIR}/playlist_sync.py", "--full"],
-            cwd=DIR,
-        )
-        if result.returncode != 0:
-            log.error("*** Playlist sync failed. ***")
-            sys.exit(1)
-
-
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="Migrate liked tracks from Yandex Music to Spotify")
     parser.add_argument("--test", action="store_true", help="Test on first 10 unprocessed tracks")
     parser.add_argument("--full", action="store_true", help="Process all tracks (resumable)")
-    parser.add_argument("--full-sync", action="store_true", help="Fetch from Yandex + migrate to Spotify")
     parser.add_argument("--resolve", action="store_true", help="Manually resolve unmatched tracks using stored candidates")
     parser.add_argument("--pending", action="store_true", help="Like only pending tracks (no searching)")
     parser.add_argument("--stats", action="store_true", help="Print current migration statistics")
     parser.add_argument("--force-prematch", action="store_true", help="Refetch entire Spotify library for pre-matching (ignore early-stop)")
-    parser.add_argument("--token", help="Yandex Music OAuth token (required for --full-sync)")
-    parser.add_argument("--playlists", action="store_true", help="Include playlist sync in --full-sync")
     args = parser.parse_args()
 
     if args.test:
@@ -589,13 +553,6 @@ if __name__ == "__main__":
         cmd_stats()
         print()
         cmd_migrate(test_mode=False, force_prematch=args.force_prematch)
-    elif args.full_sync:
-        token = args.token or os.environ.get("YANDEX_MUSIC_TOKEN")
-        if not token:
-            log.error("Error: --token is required for --full-sync")
-            log.error("  python3 spotify_crossref.py --full-sync --token YOUR_TOKEN")
-            sys.exit(1)
-        cmd_full_sync(token, include_playlists=args.playlists)
     elif args.resolve:
         cmd_resolve()
     elif args.pending:
@@ -603,12 +560,10 @@ if __name__ == "__main__":
     elif args.stats:
         cmd_stats()
     else:
-        print("Usage:")
-        print("  python3 spotify_crossref.py --test                    # Test on 10 tracks")
-        print("  python3 spotify_crossref.py --full                    # Process all tracks (resumable)")
-        print("  python3 spotify_crossref.py --full-sync --token TOKEN # Yandex fetch + migrate")
-        print("  python3 spotify_crossref.py --full-sync --token TOKEN --playlists  # Include playlists")
-        print("  python3 spotify_crossref.py --resolve                 # Manually pick from stored candidates")
-        print("  python3 spotify_crossref.py --stats                   # Print migration statistics")
-        print("  python3 spotify_crossref.py --pending                 # Like only pending tracks (no searching)")
-        print("  python3 spotify_crossref.py --full --force-prematch   # Refetch full library for pre-matching")
+        print("Usage: python3 migrate.py (recommended) or directly:")
+        print("  python3 spotify_crossref.py --test                  # Test on 10 tracks")
+        print("  python3 spotify_crossref.py --full                  # Process all tracks (resumable)")
+        print("  python3 spotify_crossref.py --resolve               # Manually pick from stored candidates")
+        print("  python3 spotify_crossref.py --stats                 # Print migration statistics")
+        print("  python3 spotify_crossref.py --pending               # Like only pending tracks")
+        print("  python3 spotify_crossref.py --full --force-prematch # Refetch full library for pre-matching")
