@@ -66,6 +66,7 @@ python3 spotify_crossref.py <command> [options]
 | `--stats` | Print migration progress, unmatched artist breakdown |
 | `--test` | Same as `--full` but limited to 10 tracks (useful for first-time setup) |
 | `--pending` | Like previously matched tracks without searching (runs implicitly during `--full`) |
+| `--force-prematch` | Combined with `--full` or `--test`: refetch entire Spotify library for pre-matching (default: incremental) |
 
 ## Rate limits
 
@@ -104,12 +105,30 @@ python3 yandex_fetch.py --token YOUR_YANDEX_TOKEN
 
 ## How it works
 
-### Matching
+### Pre-matching against existing library
 
-For each Yandex track, the tool searches Spotify with `track:TITLE artist:ARTIST`. If the artist name contains Cyrillic characters, it also tries a transliterated Latin variant. Results are scored by title similarity using Python's `SequenceMatcher`, with truncation handling (e.g. "Yesterday" matches "Yesterday - Remastered 2009").
+Before searching the Spotify API, `--full` and `--test` fetch your existing Spotify liked songs and match them locally against the Yandex track list. This avoids burning API search quota on tracks you've already liked.
 
-- Score >= 0.7: automatically liked on Spotify
-- Score < 0.7: saved to `not_found` with top 5 candidates for manual resolution
+- **First run** (no `spotify_found.json`): fetches your entire Spotify library
+- **Subsequent runs**: fetches incrementally (newest-first), stopping early when it reaches previously-synced tracks (≥90% of a page already known)
+- **`--force-prematch`**: refetches the entire library regardless
+
+Matching uses a two-phase lookup:
+1. **Title index** (O(1)): normalized title exact match, then verify artist similarity — handles ~96% of matches
+2. **Artist index** (fallback): for each Yandex artist, scan all songs by that artist and score by title similarity
+
+Pre-matching also resolves previously-unmatched tracks (`not_found`) and pending tracks against newly fetched library songs.
+
+### Scoring
+
+Similarity is computed using **Levenshtein distance** with truncation handling (e.g. "Yesterday" matches "Yesterday - Remastered 2009"). Artist and title are scored independently — both must meet the threshold.
+
+- `min(title_score, artist_score)` >= 0.7: automatically liked on Spotify
+- Below threshold: saved to `not_found` with top 5 candidates for manual resolution
+
+### API search
+
+For tracks not pre-matched from the library, the tool searches Spotify with `track:TITLE artist:ARTIST`. If the artist name contains Cyrillic characters, it also tries a transliterated Latin variant.
 
 ### Data files
 
