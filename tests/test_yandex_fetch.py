@@ -217,3 +217,102 @@ class TestMain:
         data = read_json(likes_file)
         assert len(data) == 150
         assert mock_client._request.post.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# 3. fetch_playlists()
+# ---------------------------------------------------------------------------
+
+class TestFetchPlaylists:
+    def _make_playlist_mock(self, kind, title, track_ids):
+        """Create a mock playlist with tracks."""
+        pl = MagicMock()
+        pl.kind = kind
+        pl.title = title
+        return pl
+
+    def _make_full_playlist_mock(self, track_ids):
+        """Create a mock full playlist with track shorts."""
+        full = MagicMock()
+        full.tracks = [MagicMock(track_id=tid) for tid in track_ids]
+        return full
+
+    @patch("sys.argv", ["yandex_fetch.py", "--token", "test_token", "--playlists"])
+    def test_fetches_playlists(self, yf, tmp_path, monkeypatch):
+        playlists_file = str(tmp_path / "playlists.json")
+        monkeypatch.setattr(yf, "PLAYLISTS_FILE", playlists_file)
+        monkeypatch.setattr(yf, "LIKES_FILE", str(tmp_path / "likes.json"))
+        monkeypatch.setattr(yf, "FOUND_FILE", str(tmp_path / "found.json"))
+        monkeypatch.setattr(yf, "NOT_FOUND_FILE", str(tmp_path / "nf.json"))
+
+        mock_client = MagicMock()
+        mock_client.me.account.login = "testuser"
+        mock_client.base_url = "https://api.music.yandex.net"
+        mock_client.init.return_value = mock_client
+
+        # Likes (empty)
+        mock_client.users_likes_tracks.return_value = []
+
+        # One playlist with two tracks
+        pl_mock = self._make_playlist_mock(1, "My Playlist", ["100", "200"])
+        mock_client.users_playlists_list.return_value = [pl_mock]
+
+        full_pl = self._make_full_playlist_mock(["100", "200"])
+        mock_client.users_playlists.return_value = full_pl
+
+        track_details = [
+            {"id": 100, "title": "Song A", "artists": [{"name": "Artist A"}]},
+            {"id": 200, "title": "Song B", "artists": [{"name": "Artist B"}]},
+        ]
+        mock_client._request.post.return_value = track_details
+
+        monkeypatch.setattr(yf, "Client", lambda token: mock_client)
+
+        yf.main()
+
+        data = read_json(playlists_file)
+        assert len(data) == 1
+        assert data[0]["name"] == "My Playlist"
+        assert len(data[0]["tracks"]) == 2
+
+    @patch("sys.argv", ["yandex_fetch.py", "--token", "test_token", "--playlists"])
+    def test_incremental_skips_unchanged(self, yf, tmp_path, monkeypatch):
+        playlists_file = str(tmp_path / "playlists.json")
+        monkeypatch.setattr(yf, "PLAYLISTS_FILE", playlists_file)
+        monkeypatch.setattr(yf, "LIKES_FILE", str(tmp_path / "likes.json"))
+        monkeypatch.setattr(yf, "FOUND_FILE", str(tmp_path / "found.json"))
+        monkeypatch.setattr(yf, "NOT_FOUND_FILE", str(tmp_path / "nf.json"))
+
+        # Pre-existing playlist data
+        write_json(playlists_file, [{
+            "playlist_id": "1",
+            "name": "My Playlist",
+            "tracks": [
+                {"title": "Song A", "artists": "Artist A", "id": "100"},
+                {"title": "Song B", "artists": "Artist B", "id": "200"},
+            ],
+        }])
+
+        mock_client = MagicMock()
+        mock_client.me.account.login = "testuser"
+        mock_client.base_url = "https://api.music.yandex.net"
+        mock_client.init.return_value = mock_client
+        mock_client.users_likes_tracks.return_value = []
+
+        pl_mock = self._make_playlist_mock(1, "My Playlist", ["100", "200"])
+        mock_client.users_playlists_list.return_value = [pl_mock]
+
+        # Same tracks as before
+        full_pl = self._make_full_playlist_mock(["100", "200"])
+        mock_client.users_playlists.return_value = full_pl
+
+        monkeypatch.setattr(yf, "Client", lambda token: mock_client)
+
+        yf.main()
+
+        # _request.post should NOT be called for track details (playlist unchanged)
+        mock_client._request.post.assert_not_called()
+
+        data = read_json(playlists_file)
+        assert len(data) == 1
+        assert len(data[0]["tracks"]) == 2

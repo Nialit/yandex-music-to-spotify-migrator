@@ -12,10 +12,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pytest
 import spotipy.exceptions
 
-# Patch the spotipy client and config import BEFORE importing the module
+# Patch config and spotipy BEFORE importing the modules
 with patch.dict("sys.modules", {"config": MagicMock(CLIENT_ID="x", CLIENT_SECRET="y", REDIRECT_URI="http://localhost")}):
     with patch("spotipy.Spotify"):
         with patch("spotipy.oauth2.SpotifyOAuth"):
+            import matching
             import spotify_crossref as sc
 
 
@@ -51,20 +52,20 @@ def read_json(path):
 
 class TestNormalize:
     def test_lowercase_and_strip(self):
-        assert sc.normalize("  Hello World  ") == "hello world"
+        assert matching.normalize("  Hello World  ") == "hello world"
 
     def test_removes_punctuation(self):
-        assert sc.normalize("rock'n'roll!") == "rocknroll"
+        assert matching.normalize("rock'n'roll!") == "rocknroll"
 
     def test_collapses_spaces(self):
-        assert sc.normalize("a   b    c") == "a b c"
+        assert matching.normalize("a   b    c") == "a b c"
 
     def test_unicode_nfkd(self):
         # NFKD decomposes e.g. ligatures: ﬁ → fi
-        assert sc.normalize("ﬁne") == "fine"
+        assert matching.normalize("ﬁne") == "fine"
 
     def test_empty_string(self):
-        assert sc.normalize("") == ""
+        assert matching.normalize("") == ""
 
 
 # ---------------------------------------------------------------------------
@@ -73,29 +74,29 @@ class TestNormalize:
 
 class TestSimilarity:
     def test_identical(self):
-        assert sc.similarity("Yesterday", "Yesterday") == 1.0
+        assert matching.similarity("Yesterday", "Yesterday") == 1.0
 
     def test_completely_different(self):
-        assert sc.similarity("abc", "xyz") < 0.3
+        assert matching.similarity("abc", "xyz") < 0.3
 
     def test_truncation_remastered(self):
-        score = sc.similarity("Yesterday", "Yesterday - Remastered 2009")
+        score = matching.similarity("Yesterday", "Yesterday - Remastered 2009")
         assert score == 1.0
 
     def test_truncation_prefix(self):
-        score = sc.similarity("Hello", "Hello World Extended Mix")
+        score = matching.similarity("Hello", "Hello World Extended Mix")
         assert score == 1.0
 
     def test_no_truncation_same_length(self):
-        score = sc.similarity("abcde", "abcdf")
+        score = matching.similarity("abcde", "abcdf")
         assert score < 1.0
 
     def test_empty_string(self):
-        score = sc.similarity("", "something")
+        score = matching.similarity("", "something")
         assert score == 0.0
 
     def test_both_empty(self):
-        score = sc.similarity("", "")
+        score = matching.similarity("", "")
         assert score == 1.0
 
 
@@ -105,38 +106,37 @@ class TestSimilarity:
 
 class TestCyrillic:
     def test_latin_not_cyrillic(self):
-        assert sc.is_cyrillic("Hello World") is False
+        assert matching.is_cyrillic("Hello World") is False
 
     def test_cyrillic_detected(self):
-        assert sc.is_cyrillic("Привет") is True
+        assert matching.is_cyrillic("Привет") is True
 
     def test_mixed_text(self):
-        assert sc.is_cyrillic("Hello Привет") is True
+        assert matching.is_cyrillic("Hello Привет") is True
 
     def test_empty_string(self):
-        assert sc.is_cyrillic("") is False
+        assert matching.is_cyrillic("") is False
 
 
 class TestTransliterate:
-    @pytest.mark.skipif(not sc.HAS_TRANSLIT, reason="transliterate not installed")
+    @pytest.mark.skipif(not matching.HAS_TRANSLIT, reason="transliterate not installed")
     def test_cyrillic_transliterated(self):
         from transliterate import translit
         result = translit("Привет", "ru", reversed=True)
         assert result is not None
-        assert sc.is_cyrillic(result) is False
+        assert matching.is_cyrillic(result) is False
 
-    @pytest.mark.skipif(not sc.HAS_TRANSLIT, reason="transliterate not installed")
+    @pytest.mark.skipif(not matching.HAS_TRANSLIT, reason="transliterate not installed")
     def test_transliterate_text_with_cyrillic(self):
-        with patch.object(sc, "translit", wraps=sc.translit) as mock_t:
-            result = sc.transliterate_text("Тест")
-            if result is not None:
-                assert sc.is_cyrillic(result) is False
+        result = matching.transliterate_text("Тест")
+        if result is not None:
+            assert matching.is_cyrillic(result) is False
 
     def test_latin_returns_none(self):
-        assert sc.transliterate_text("Hello") is None
+        assert matching.transliterate_text("Hello") is None
 
     def test_empty_returns_none(self):
-        assert sc.transliterate_text("") is None
+        assert matching.transliterate_text("") is None
 
 
 # ---------------------------------------------------------------------------
@@ -146,32 +146,30 @@ class TestTransliterate:
 class TestScoreItems:
     def test_scores_latin_title(self):
         items = [make_spotify_item("1", "Yesterday")]
-        scored = sc.score_items(items, "Yesterday")
+        scored = matching.score_items(items, "Yesterday")
         assert len(scored) == 1
         assert scored[0]["title_score"] == 1.0
         assert scored[0]["spotify_id"] == "1"
 
-    @pytest.mark.skipif(not sc.HAS_TRANSLIT, reason="transliterate not installed")
+    @pytest.mark.skipif(not matching.HAS_TRANSLIT, reason="transliterate not installed")
     def test_scores_cyrillic_title(self):
-        # transliterate_text may return None if translit fails for this text,
-        # so we mock it to ensure we test the max-of-original-and-translit path
-        with patch.object(sc, "transliterate_text", return_value="Privet"):
+        with patch.object(matching, "transliterate_text", return_value="Privet"):
             items = [make_spotify_item("1", "Privet")]
-            scored = sc.score_items(items, "Привет")
+            scored = matching.score_items(items, "Привет")
             assert len(scored) == 1
             assert scored[0]["title_score"] == 1.0
 
     def test_empty_items(self):
-        assert sc.score_items([], "anything") == []
+        assert matching.score_items([], "anything") == []
 
     def test_includes_artist_info(self):
         items = [make_spotify_item("1", "Song", ["Artist A", "Artist B"])]
-        scored = sc.score_items(items, "Song")
+        scored = matching.score_items(items, "Song")
         assert scored[0]["spotify_artists"] == "Artist A, Artist B"
 
     def test_max_of_original_and_translit(self):
         items = [make_spotify_item("1", "Song Title")]
-        scored = sc.score_items(items, "Song Title")
+        scored = matching.score_items(items, "Song Title")
         assert scored[0]["title_score"] == 1.0
 
 
@@ -180,49 +178,48 @@ class TestScoreItems:
 # ---------------------------------------------------------------------------
 
 class TestSearchTrack:
-    @patch.object(sc, "spotify_search", return_value=[])
-    @patch.object(sc, "DELAY_BETWEEN_REQUESTS", 0)
+    @patch.object(matching, "spotify_search", return_value=[])
+    @patch.object(matching, "DELAY_BETWEEN_REQUESTS", 0)
     def test_no_results(self, mock_search):
-        best, candidates = sc.search_track("NonExistent", "Nobody")
+        best, candidates = matching.search_track(MagicMock(), "NonExistent", "Nobody")
         assert best is None
         assert candidates == []
 
-    @patch.object(sc, "DELAY_BETWEEN_REQUESTS", 0)
-    @patch.object(sc, "spotify_search")
+    @patch.object(matching, "DELAY_BETWEEN_REQUESTS", 0)
+    @patch.object(matching, "spotify_search")
     def test_results_below_threshold(self, mock_search):
         mock_search.return_value = [make_spotify_item("1", "Totally Different Song")]
-        best, candidates = sc.search_track("My Song", "Artist")
+        best, candidates = matching.search_track(MagicMock(), "My Song", "Artist")
         assert best is not None  # still returns best
         assert len(candidates) >= 1
 
-    @patch.object(sc, "DELAY_BETWEEN_REQUESTS", 0)
-    @patch.object(sc, "spotify_search")
+    @patch.object(matching, "DELAY_BETWEEN_REQUESTS", 0)
+    @patch.object(matching, "spotify_search")
     def test_results_above_threshold(self, mock_search):
         mock_search.return_value = [make_spotify_item("1", "Yesterday")]
-        best, candidates = sc.search_track("Yesterday", "Beatles")
+        best, candidates = matching.search_track(MagicMock(), "Yesterday", "Beatles")
         assert best is not None
         assert best["title_score"] == 1.0
 
-    @patch.object(sc, "DELAY_BETWEEN_REQUESTS", 0)
-    @patch.object(sc, "spotify_search")
+    @patch.object(matching, "DELAY_BETWEEN_REQUESTS", 0)
+    @patch.object(matching, "spotify_search")
     def test_deduplication_keeps_highest_score(self, mock_search):
         mock_search.return_value = [
             make_spotify_item("1", "Song"),
             make_spotify_item("1", "Song - Remix"),
         ]
-        best, candidates = sc.search_track("Song", "Artist")
-        # Only one entry for id "1"
+        best, candidates = matching.search_track(MagicMock(), "Song", "Artist")
         ids = [c["spotify_id"] for c in candidates]
         assert ids.count("1") == 1
         assert candidates[0]["title_score"] == 1.0
 
-    @patch.object(sc, "DELAY_BETWEEN_REQUESTS", 0)
-    @patch.object(sc, "spotify_search")
+    @patch.object(matching, "DELAY_BETWEEN_REQUESTS", 0)
+    @patch.object(matching, "spotify_search")
     def test_limited_to_candidates_to_store(self, mock_search):
         items = [make_spotify_item(str(i), f"Song {i}") for i in range(10)]
         mock_search.return_value = items
-        _, candidates = sc.search_track("Song 0", "Artist")
-        assert len(candidates) <= sc.CANDIDATES_TO_STORE
+        _, candidates = matching.search_track(MagicMock(), "Song 0", "Artist")
+        assert len(candidates) <= matching.CANDIDATES_TO_STORE
 
 
 # ---------------------------------------------------------------------------
@@ -453,16 +450,16 @@ class TestCmdMigrate:
 
 class TestFirstArtist:
     def test_single_artist(self):
-        assert sc.first_artist("Beatles") == "Beatles"
+        assert matching.first_artist("Beatles") == "Beatles"
 
     def test_multiple_artists(self):
-        assert sc.first_artist("Beatles, Wings, Solo") == "Beatles"
+        assert matching.first_artist("Beatles, Wings, Solo") == "Beatles"
 
     def test_strips_whitespace(self):
-        assert sc.first_artist("  Beatles , Wings") == "Beatles"
+        assert matching.first_artist("  Beatles , Wings") == "Beatles"
 
     def test_empty_string(self):
-        assert sc.first_artist("") == ""
+        assert matching.first_artist("") == ""
 
 
 class TestUpdateArtistMetStatus:
