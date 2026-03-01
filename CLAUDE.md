@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Golden Rules
+
+- **Never break existing functionality to add new features.** If a new requirement conflicts with existing behavior (e.g., ordering vs batching performance), find a solution that preserves both — don't degrade one for the other.
+
 ## Project Overview
 
 A CLI tool to migrate liked tracks and playlists from Yandex Music to Spotify. The core challenge is that artist names may be in Cyrillic and differ between services.

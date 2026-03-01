@@ -158,13 +158,16 @@ class TestSyncPlaylists:
         pl = make_playlist("1", "My Playlist", [("Song", "Artist", "100")])
         pool = {"100": {"spotify_id": "sp1", "spotify_uri": "spotify:track:sp1", "title_score": 1.0}}
 
-        mock_sp.current_user.return_value = {"id": "user1"}
-        mock_sp.user_playlist_create.return_value = {"id": "spotify_pl_1"}
+        mock_sp._post.return_value = {"id": "spotify_pl_1"}
 
         ps.sync_playlists([pl], pool)
 
-        mock_sp.user_playlist_create.assert_called_once_with("user1", "My Playlist")
-        mock_sp.playlist_add_items.assert_called_once_with("spotify_pl_1", ["spotify:track:sp1"])
+        # Playlist creation via POST /me/playlists
+        mock_sp._post.assert_any_call("me/playlists", payload={
+            "name": "My Playlist", "public": True,
+        })
+        # Track addition via POST /playlists/{id}/items
+        mock_sp._post.assert_any_call("playlists/spotify_pl_1/items", payload=["spotify:track:sp1"])
 
         mapping = read_json(ps.MAPPING_FILE)
         assert "1" in mapping
@@ -193,8 +196,7 @@ class TestSyncPlaylists:
         ps.sync_playlists([pl], pool)
 
         # Only the new track should be added
-        mock_sp.playlist_add_items.assert_called_once_with("spotify_pl_1", ["spotify:track:sp2"])
-        mock_sp.user_playlist_create.assert_not_called()
+        mock_sp._post.assert_called_once_with("playlists/spotify_pl_1/items", payload=["spotify:track:sp2"])
 
     @patch.object(ps, "sp")
     def test_up_to_date_playlist_no_api_calls(self, mock_sp, tmp_path):
@@ -211,8 +213,7 @@ class TestSyncPlaylists:
 
         ps.sync_playlists([pl], pool)
 
-        mock_sp.playlist_add_items.assert_not_called()
-        mock_sp.user_playlist_create.assert_not_called()
+        mock_sp._post.assert_not_called()
 
     @patch.object(ps, "sp")
     def test_unmatched_tracks_skipped(self, mock_sp, tmp_path):
@@ -226,13 +227,15 @@ class TestSyncPlaylists:
             "200": None,  # unmatched
         }
 
-        mock_sp.current_user.return_value = {"id": "user1"}
-        mock_sp.user_playlist_create.return_value = {"id": "spotify_pl_1"}
+        mock_sp._post.return_value = {"id": "spotify_pl_1"}
 
         ps.sync_playlists([pl], pool)
 
-        # Only the matched track should be added
-        mock_sp.playlist_add_items.assert_called_once_with("spotify_pl_1", ["spotify:track:sp1"])
+        # Playlist creation + only the matched track added
+        mock_sp._post.assert_any_call("me/playlists", payload={
+            "name": "My Playlist", "public": True,
+        })
+        mock_sp._post.assert_any_call("playlists/spotify_pl_1/items", payload=["spotify:track:sp1"])
 
     @patch.object(ps, "sp")
     def test_empty_playlist_skipped(self, mock_sp, tmp_path):
@@ -241,8 +244,7 @@ class TestSyncPlaylists:
 
         ps.sync_playlists([pl], {})
 
-        mock_sp.user_playlist_create.assert_not_called()
-        mock_sp.playlist_add_items.assert_not_called()
+        mock_sp._post.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

@@ -20,12 +20,11 @@ import sys
 import argparse
 import os
 import tempfile
-import logging
-from logging.handlers import TimedRotatingFileHandler
 
 import spotipy.exceptions
 
 from spotify_client import create_client, PLAYLIST_SCOPES
+from log_setup import get_logger
 from matching import (
     first_artist, search_track, score_items, get_retry_after,
     fetch_liked_songs, build_library_index, prematch_from_library,
@@ -34,32 +33,8 @@ from matching import (
 
 DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = f"{DIR}/data"
-LOG_DIR = f"{DIR}/logs"
 
-os.makedirs(LOG_DIR, exist_ok=True)
-
-log = logging.getLogger("playlist_sync")
-log.setLevel(logging.DEBUG)
-
-_log_fmt = logging.Formatter("%(asctime)s %(levelname)-5s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
-
-_console = logging.StreamHandler()
-_console.setLevel(logging.INFO)
-_console.setFormatter(logging.Formatter("%(message)s"))
-log.addHandler(_console)
-
-_latest = logging.FileHandler(f"{LOG_DIR}/playlist_sync_latest.log", mode="w", encoding="utf-8")
-_latest.setLevel(logging.DEBUG)
-_latest.setFormatter(_log_fmt)
-log.addHandler(_latest)
-
-_daily = TimedRotatingFileHandler(
-    f"{LOG_DIR}/playlist_sync.log", when="midnight", backupCount=0, encoding="utf-8",
-)
-_daily.setLevel(logging.DEBUG)
-_daily.setFormatter(_log_fmt)
-_daily.namer = lambda name: name.replace(".log.", ".") + ".log"
-log.addHandler(_daily)
+log = get_logger("playlist")
 
 # Data files
 YANDEX_PLAYLISTS_FILE = f"{DATA_DIR}/yandex_playlists.json"
@@ -69,10 +44,19 @@ MAPPING_FILE = f"{DATA_DIR}/playlist_mapping.json"
 FOUND_FILE = f"{DATA_DIR}/spotify_found.json"
 
 DELAY_BETWEEN_REQUESTS = 0
-LIKE_BATCH_SIZE = 40
+LIKE_BATCH_SIZE = 40        # max per PUT /me/library call (API limit)
 PLAYLIST_ADD_BATCH_SIZE = 100
 
 sp = create_client(extra_scopes=PLAYLIST_SCOPES)
+
+
+def playlist_add_items(playlist_id, uris):
+    """Add tracks to a playlist using POST /playlists/{id}/items.
+
+    spotipy 2.25.2 still uses the old /tracks path which Spotify renamed
+    to /items in February 2026.
+    """
+    return sp._post(f"playlists/{playlist_id}/items", payload=uris)
 
 
 # --- File I/O ---
@@ -101,7 +85,7 @@ def atomic_write_json(path, data):
 
 
 def like_tracks(spotify_ids):
-    """Save tracks to library using the PUT /me/library endpoint."""
+    """Save tracks to Spotify library using PUT /me/library. Max 40 per request."""
     import requests as _req
     uris = [f"spotify:track:{tid}" for tid in spotify_ids]
     token = sp.auth_manager.get_access_token(as_dict=False)
@@ -354,11 +338,13 @@ def sync_playlists(playlists, pool, test_mode=False):
         spotify_pl_id = pl_map.get("spotify_playlist_id")
 
         if not spotify_pl_id:
-            # Create new Spotify playlist
+            # Create new Spotify playlist (POST /me/playlists — the old
+            # /users/{id}/playlists endpoint was removed by Spotify Feb 2026)
             log.info(f"  {pl_name}: creating on Spotify...")
             try:
-                user_id = sp.current_user()["id"]
-                result = sp.user_playlist_create(user_id, pl_name)
+                result = sp._post("me/playlists", payload={
+                    "name": pl_name, "public": True,
+                })
                 spotify_pl_id = result["id"]
                 log.info(f"  Created playlist: {spotify_pl_id}")
             except spotipy.exceptions.SpotifyException as e:
@@ -394,7 +380,7 @@ def sync_playlists(playlists, pool, test_mode=False):
         try:
             for batch_start in range(0, len(new_uris), PLAYLIST_ADD_BATCH_SIZE):
                 batch = new_uris[batch_start:batch_start + PLAYLIST_ADD_BATCH_SIZE]
-                sp.playlist_add_items(spotify_pl_id, batch)
+                playlist_add_items(spotify_pl_id, batch)
                 added += len(batch)
                 time.sleep(DELAY_BETWEEN_REQUESTS)
         except spotipy.exceptions.SpotifyException as e:
@@ -407,7 +393,7 @@ def sync_playlists(playlists, pool, test_mode=False):
                     remaining_uris = new_uris[added:]
                     for batch_start in range(0, len(remaining_uris), PLAYLIST_ADD_BATCH_SIZE):
                         batch = remaining_uris[batch_start:batch_start + PLAYLIST_ADD_BATCH_SIZE]
-                        sp.playlist_add_items(spotify_pl_id, batch)
+                        playlist_add_items(spotify_pl_id, batch)
                         added += len(batch)
                         time.sleep(DELAY_BETWEEN_REQUESTS)
                 except Exception:

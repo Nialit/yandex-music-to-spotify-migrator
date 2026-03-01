@@ -247,6 +247,7 @@ class TestFetchPlaylists:
 
         mock_client = MagicMock()
         mock_client.me.account.login = "testuser"
+        mock_client.me.account.uid = 12345
         mock_client.base_url = "https://api.music.yandex.net"
         mock_client.init.return_value = mock_client
 
@@ -257,8 +258,10 @@ class TestFetchPlaylists:
         pl_mock = self._make_playlist_mock(1, "My Playlist", ["100", "200"])
         mock_client.users_playlists_list.return_value = [pl_mock]
 
-        full_pl = self._make_full_playlist_mock(["100", "200"])
-        mock_client.users_playlists.return_value = full_pl
+        # Raw API returns playlist with track IDs
+        mock_client._request.get.return_value = {
+            "tracks": [{"id": 100}, {"id": 200}],
+        }
 
         track_details = [
             {"id": 100, "title": "Song A", "artists": [{"name": "Artist A"}]},
@@ -295,6 +298,7 @@ class TestFetchPlaylists:
 
         mock_client = MagicMock()
         mock_client.me.account.login = "testuser"
+        mock_client.me.account.uid = 12345
         mock_client.base_url = "https://api.music.yandex.net"
         mock_client.init.return_value = mock_client
         mock_client.users_likes_tracks.return_value = []
@@ -302,9 +306,10 @@ class TestFetchPlaylists:
         pl_mock = self._make_playlist_mock(1, "My Playlist", ["100", "200"])
         mock_client.users_playlists_list.return_value = [pl_mock]
 
-        # Same tracks as before
-        full_pl = self._make_full_playlist_mock(["100", "200"])
-        mock_client.users_playlists.return_value = full_pl
+        # Same tracks as before (raw API)
+        mock_client._request.get.return_value = {
+            "tracks": [{"id": 100}, {"id": 200}],
+        }
 
         monkeypatch.setattr(yf, "Client", lambda token: mock_client)
 

@@ -18,11 +18,10 @@ import sys
 import argparse
 import os
 import tempfile
-import logging
-from logging.handlers import TimedRotatingFileHandler
 import spotipy
 
 from spotify_client import create_client
+from log_setup import get_logger
 from matching import (
     first_artist, normalize, similarity, is_cyrillic, transliterate_text,
     score_items, fetch_liked_songs, build_library_index, prematch_from_library,
@@ -32,39 +31,15 @@ from matching import (
 
 DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = f"{DIR}/data"
-LOG_DIR = f"{DIR}/logs"
 
-os.makedirs(LOG_DIR, exist_ok=True)
-
-log = logging.getLogger("spotify_crossref")
-log.setLevel(logging.DEBUG)
-
-_log_fmt = logging.Formatter("%(asctime)s %(levelname)-5s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
-
-_console = logging.StreamHandler()
-_console.setLevel(logging.INFO)
-_console.setFormatter(logging.Formatter("%(message)s"))
-log.addHandler(_console)
-
-_latest = logging.FileHandler(f"{LOG_DIR}/latest.log", mode="w", encoding="utf-8")
-_latest.setLevel(logging.DEBUG)
-_latest.setFormatter(_log_fmt)
-log.addHandler(_latest)
-
-_daily = TimedRotatingFileHandler(
-    f"{LOG_DIR}/spotify_crossref.log", when="midnight", backupCount=0, encoding="utf-8",
-)
-_daily.setLevel(logging.DEBUG)
-_daily.setFormatter(_log_fmt)
-_daily.namer = lambda name: name.replace(".log.", ".") + ".log"
-log.addHandler(_daily)
+log = get_logger("crossref")
 
 FOUND_FILE = f"{DATA_DIR}/spotify_found.json"
 NOT_FOUND_FILE = f"{DATA_DIR}/spotify_not_found.json"
 PENDING_FILE = f"{DATA_DIR}/spotify_pending.json"
 
 DELAY_BETWEEN_REQUESTS = 0
-LIKE_BATCH_SIZE = 40        # max track URIs per PUT /me/library call (API limit)
+LIKE_BATCH_SIZE = 40        # max per PUT /me/library call (API limit)
 DELAY_AFTER_LIKE = 0
 DELAY_BETWEEN_BATCHES = 0
 
@@ -75,9 +50,7 @@ sp = create_client()
 
 
 def like_tracks(spotify_ids):
-    """Save tracks to library using the PUT /me/library endpoint (Feb 2026).
-    Accepts a list of Spotify track IDs, converts to URIs internally.
-    URIs passed as query parameter per API spec (max 40 per request)."""
+    """Save tracks to Spotify library using PUT /me/library. Max 40 per request."""
     import requests as _req
     uris = [f"spotify:track:{tid}" for tid in spotify_ids]
     token = sp.auth_manager.get_access_token(as_dict=False)

@@ -20,6 +20,8 @@ import os
 import sys
 import subprocess
 
+from log_setup import reset_latest
+
 DIR = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -32,6 +34,8 @@ def run(script, args):
 
 
 def main():
+    reset_latest()
+
     parser = argparse.ArgumentParser(
         description="Yandex Music → Spotify migration",
         usage="%(prog)s <flow> [options]",
@@ -59,8 +63,13 @@ def main():
             print("  python3 migrate.py all --sync --token YOUR_TOKEN")
             sys.exit(1)
         fetch_args = ["--token", token]
+        if not do_liked:
+            fetch_args.append("--no-likes")
         if do_playlists:
             fetch_args.append("--playlists")
+            if args.filter_playlist:
+                fetch_args.append("--filter-playlist")
+                fetch_args.extend(args.filter_playlist)
         run("yandex_fetch.py", fetch_args)
 
     if args.flow in ("liked", "playlists", "all"):
