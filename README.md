@@ -9,7 +9,7 @@ All commands are resumable -- safe to interrupt and re-run.
 - Python 3.10+
 - Spotify Premium account
 - A Spotify Developer app (see below)
-- A Yandex Music OAuth token (for `--full-sync` or `yandex_fetch.py`; get one via [yandex-music-token](https://github.com/MarshalX/yandex-music-token) browser extension)
+- A Yandex Music OAuth token (for `--sync` or `yandex_fetch.py`; get one via [yandex-music-token](https://github.com/MarshalX/yandex-music-token) browser extension)
 
 ## Spotify Developer Setup
 
@@ -45,50 +45,70 @@ All commands go through `migrate.py` (or the wrapper scripts `migrate.sh` / `mig
 
 ```bash
 # Linux/macOS
-./migrate.sh <command> [options]
+./migrate.sh <flow> [options]
 
 # Windows
-migrate.bat <command> [options]
+migrate.bat <flow> [options]
 
 # Or directly
 source venv/bin/activate
-python3 migrate.py <command> [options]
+python3 migrate.py <flow> [options]
 ```
 
-### Commands
+### Flows
 
-By default, commands operate on both liked tracks and playlists. Use `--no-playlists` to skip playlists.
+The first positional argument selects what to migrate:
 
-| Command | Description |
-|---------|-------------|
-| `--full-sync --token TOKEN` | Fetch from Yandex + migrate likes + sync playlists |
-| `--full` | Migrate likes + sync playlists (no Yandex fetch) |
-| `--test` | Test mode: 10 liked tracks + first playlist |
-| `--resolve` | Resolve unmatched tracks (likes, then playlists) |
-| `--stats` | Show migration progress for likes and playlists |
-| `--pending` | Like previously matched tracks without searching |
+| Flow | Description |
+|------|-------------|
+| `all` | Migrate liked tracks + sync playlists (liked runs first) |
+| `liked` | Migrate liked tracks only (search + like on Spotify) |
+| `playlists` | Sync playlists only (match tracks + create/update Spotify playlists) |
+| `resolve` | Interactively resolve unmatched tracks — shows Spotify candidates and lets you pick the right one, mark as no match, or skip. Runs for both liked tracks and playlists |
+| `stats` | Show migration progress: matched/unmatched/pending counts for both liked tracks and playlists |
+| `pending` | Like previously matched tracks that are waiting in `spotify_pending.json` without doing any new searching |
 
-| Option | Description |
-|--------|-------------|
-| `--no-playlists` | Skip playlist sync (likes only) |
-| `--force-prematch` | Refetch entire Spotify library for pre-matching |
-| `--filter-playlist NAME` | Only sync playlists matching this name (exact match, repeatable) |
+### Options
 
-### Playlist-only mode
+| Option | Works with | Description |
+|--------|-----------|-------------|
+| `--test` | `liked`, `playlists`, `all` | Test mode — limit to 10 tracks (liked) / first playlist (playlists). Use this for a dry-run before committing to a full migration |
+| `--filter-playlist NAME [NAME ...]` | `playlists`, `all` | Only sync playlists whose Yandex name matches one of the given names (exact match, case-sensitive). Accepts one or more space-separated names |
+| `--force-prematch` | `liked`, `playlists`, `all` | Refetch your entire Spotify library for pre-matching instead of doing an incremental fetch. Useful if you've liked many tracks on Spotify since the last run |
+| `--sync` | `liked`, `playlists`, `all` | Fetch fresh data from Yandex Music before migrating. Requires `--token` |
+| `--token TOKEN` | `liked`, `playlists`, `all` | Yandex Music OAuth token (required with `--sync`). Can also be set via `YANDEX_MUSIC_TOKEN` env var |
 
-Use the `playlist` subcommand to operate on playlists only (no liked tracks):
+### Examples
 
 ```bash
-./migrate.sh playlist --full                                    # Sync all playlists
-./migrate.sh playlist --full --filter-playlist "Rock Classics"  # Specific playlists
-./migrate.sh playlist --test                                    # Test first playlist
-./migrate.sh playlist --resolve                                 # Resolve unmatched
-./migrate.sh playlist --stats                                   # Show status
+# --- Full migration ---
+./migrate.sh all                                       # Migrate liked tracks + all playlists
+./migrate.sh all --test                                # Test run: 10 liked tracks + first playlist
+./migrate.sh all --sync --token TOKEN                  # Fetch from Yandex first, then migrate everything
+./migrate.sh all --force-prematch                      # Full migration with complete library refetch
+./migrate.sh all --filter-playlist "Rock" "Jazz"       # Liked tracks + only "Rock" and "Jazz" playlists
+
+# --- Liked tracks only ---
+./migrate.sh liked                                     # Migrate all liked tracks
+./migrate.sh liked --test                              # Test with 10 tracks
+./migrate.sh liked --test --force-prematch             # Test with full library refetch
+./migrate.sh liked --sync --token TOKEN                # Fetch likes from Yandex, then migrate
+
+# --- Playlists only ---
+./migrate.sh playlists                                 # Sync all playlists
+./migrate.sh playlists --test                          # Test with first playlist
+./migrate.sh playlists --filter-playlist "Rock" "Jazz" # Sync only "Rock" and "Jazz" playlists
+./migrate.sh playlists --sync --token TOKEN            # Fetch playlists from Yandex, then sync
+
+# --- Maintenance ---
+./migrate.sh resolve                                   # Interactively resolve unmatched tracks
+./migrate.sh stats                                     # Show migration progress
+./migrate.sh pending                                   # Like pending matched tracks
 ```
 
-### Yandex fetch
+### Yandex fetch (standalone)
 
-Fetch data from Yandex Music separately (if not using `--full-sync`):
+Fetch data from Yandex Music separately (if not using `--sync`):
 
 ```bash
 python3 yandex_fetch.py --token TOKEN              # Liked tracks only
@@ -105,13 +125,13 @@ One potentially viable remedy to this could be to request extended quota for you
 
 ```bash
 # One command to do everything
-./migrate.sh --full-sync --token YOUR_YANDEX_TOKEN
+./migrate.sh all --sync --token YOUR_YANDEX_TOKEN
 
 # Resolve unmatched tracks interactively
-./migrate.sh --resolve
+./migrate.sh resolve
 
 # Check progress
-./migrate.sh --stats
+./migrate.sh stats
 ```
 
 ## How it works

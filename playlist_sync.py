@@ -571,7 +571,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Sync Yandex playlists to Spotify")
     parser.add_argument("--test", action="store_true", help="Test with first playlist only")
     parser.add_argument("--full", action="store_true", help="Sync all playlists")
-    parser.add_argument("--filter-playlist", action="append", metavar="NAME", help="Only sync playlists matching this name (exact match, repeatable)")
+    parser.add_argument("--filter-playlist", nargs="+", metavar="NAME", help="Only sync playlists matching this name (exact match)")
     parser.add_argument("--resolve", action="store_true", help="Manually resolve unmatched tracks")
     parser.add_argument("--stats", action="store_true", help="Show sync status")
     args = parser.parse_args()

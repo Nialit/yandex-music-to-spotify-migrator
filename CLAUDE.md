@@ -34,29 +34,56 @@ Spotify OAuth credentials are stored in `config.py`. The `.spotify_token_cache` 
 ## CLI (via migrate.py / migrate.sh / migrate.bat)
 
 ```bash
-# Everything: fetch from Yandex + migrate likes + sync playlists
-./migrate.sh --full-sync --token TOKEN
+migrate.sh <flow> [options]
+```
 
-# Likes + playlists (no Yandex fetch)
-./migrate.sh --full
+### Flows (positional, required)
 
-# Likes only
-./migrate.sh --full --no-playlists
+| Flow | Description |
+|------|-------------|
+| `liked` | Migrate liked tracks only (search + like on Spotify) |
+| `playlists` | Sync playlists only (match tracks + create/update Spotify playlists) |
+| `all` | Liked + playlists (liked runs first) |
+| `resolve` | Interactively resolve unmatched tracks (both liked + playlists) — shows candidates, pick/skip/mark no match |
+| `stats` | Show migration progress (matched/unmatched/pending counts for both) |
+| `pending` | Like tracks in `spotify_pending.json` without new searching |
 
-# Playlists only
-./migrate.sh playlist --full
+### Options
 
-# Specific playlists by name
-./migrate.sh playlist --full --filter-playlist "Rock Classics"
+| Option | Works with | Description |
+|--------|-----------|-------------|
+| `--test` | `liked`, `playlists`, `all` | Test mode — 10 tracks (liked) / first playlist (playlists) |
+| `--filter-playlist NAME [NAME ...]` | `playlists`, `all` | Only sync playlists matching these Yandex names (exact, case-sensitive, space-separated) |
+| `--force-prematch` | `liked`, `playlists`, `all` | Refetch entire Spotify library for pre-matching (instead of incremental) |
+| `--sync` | `liked`, `playlists`, `all` | Fetch fresh data from Yandex Music before migrating. Requires `--token` |
+| `--token TOKEN` | `liked`, `playlists`, `all` | Yandex Music OAuth token (required with `--sync`). Also reads `YANDEX_MUSIC_TOKEN` env var |
 
-# Test mode
-./migrate.sh --test
+### Examples
 
-# Resolve unmatched
-./migrate.sh --resolve
+```bash
+# --- Full migration ---
+./migrate.sh all                                       # Migrate liked tracks + all playlists
+./migrate.sh all --test                                # Test run: 10 liked tracks + first playlist
+./migrate.sh all --sync --token TOKEN                  # Fetch from Yandex first, then migrate everything
+./migrate.sh all --force-prematch                      # Full migration with complete library refetch
+./migrate.sh all --filter-playlist "Rock" "Jazz"       # Liked tracks + only "Rock" and "Jazz" playlists
 
-# Stats
-./migrate.sh --stats
+# --- Liked tracks only ---
+./migrate.sh liked                                     # Migrate all liked tracks
+./migrate.sh liked --test                              # Test with 10 tracks
+./migrate.sh liked --test --force-prematch             # Test with full library refetch
+./migrate.sh liked --sync --token TOKEN                # Fetch likes from Yandex, then migrate
+
+# --- Playlists only ---
+./migrate.sh playlists                                 # Sync all playlists
+./migrate.sh playlists --test                          # Test with first playlist
+./migrate.sh playlists --filter-playlist "Rock" "Jazz" # Sync only "Rock" and "Jazz" playlists
+./migrate.sh playlists --sync --token TOKEN            # Fetch playlists from Yandex, then sync
+
+# --- Maintenance ---
+./migrate.sh resolve                                   # Interactively resolve unmatched tracks
+./migrate.sh stats                                     # Show migration progress
+./migrate.sh pending                                   # Like pending matched tracks
 ```
 
 **Add-only by design:** playlist sync never removes tracks from Spotify playlists. If you need to remove tracks, do it manually in Spotify.
