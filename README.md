@@ -29,11 +29,11 @@ source venv/bin/activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Configure Spotify credentials
+# Create config file from template
 cp config.example.py config.py
-# Edit config.py with your Client ID, Client Secret, and Redirect URI
-# (you can use the same redirect URI: http://127.0.0.1:8888/callback)
 ```
+
+**Important:** Open `config.py` and fill in your Spotify app credentials — `CLIENT_ID`, `CLIENT_SECRET`, and `REDIRECT_URI` from the previous step. You can use the same redirect URI: `http://127.0.0.1:8888/callback`.
 
 On first run, a browser window opens for Spotify OAuth. The token is cached in `.spotify_token_cache`.
 
