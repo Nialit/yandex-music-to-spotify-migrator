@@ -75,6 +75,6 @@ Both scripts respect Spotify API rate limits: ~1.5s between requests with automa
 
 ## Workflow
 
-Commit on any essential checkpoint (e.g. after finishing a feature, fixing a bug, or adding tests) without waiting to be asked. Squash commits before pushing. Before pushing, always double-check that no confidential data (tokens, secrets, client IDs, personal data) is leaked in the commit.
+Squash commits before pushing. Before pushing, always double-check that no confidential data (tokens, secrets, client IDs, personal data) is leaked in the commit.
 
 When working with external APIs (Spotify, Yandex Music, etc.), always check the official documentation first as the source of truth. Do not guess how an API works — fetch and read the actual docs before writing or debugging API calls.

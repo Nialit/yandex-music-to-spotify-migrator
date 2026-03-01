@@ -7,8 +7,16 @@ All commands are resumable -- safe to interrupt and re-run.
 ## Requirements
 
 - Python 3.10+
-- A [Spotify Developer](https://developer.spotify.com/dashboard) app with `user-library-modify` and `user-library-read` scopes. You can create it freely if on a Premium account.
+- Spotify Premium account
+- A Spotify Developer app (see below)
 - A Yandex Music OAuth token (for `--full-sync`; get one via [yandex-music-token](https://github.com/MarshalX/yandex-music-token) browser extension)
+
+## Spotify Developer Setup
+
+1. Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard) and log in with your Premium account
+2. Create a new app — select **Web API** when asked which API you plan to use
+3. In the app settings, add a Redirect URI: `http://127.0.0.1:8888/callback`
+4. Note your **Client ID** and **Client Secret** from the app's settings page
 
 ## Setup
 
@@ -23,7 +31,8 @@ pip install -r requirements.txt
 
 # Configure Spotify credentials
 cp config.example.py config.py
-# Edit config.py with your CLIENT_ID, CLIENT_SECRET, REDIRECT_URI
+# Edit config.py with your Client ID, Client Secret, and Redirect URI
+# (you can use the same redirect URI: http://127.0.0.1:8888/callback)
 ```
 
 On first run, a browser window opens for Spotify OAuth. The token is cached in `.spotify_token_cache`.
@@ -33,7 +42,11 @@ On first run, a browser window opens for Spotify OAuth. The token is cached in `
 All commands can be run via the wrapper script (handles venv activation):
 
 ```bash
+# Linux/macOS
 ./migrate.sh <command> [options]
+
+# Windows
+migrate.bat <command> [options]
 ```
 
 Or directly:
