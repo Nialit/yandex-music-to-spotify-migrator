@@ -10,6 +10,7 @@ Usage:
   python3 spotify_crossref.py --full     # Process all tracks (resumable)
   python3 spotify_crossref.py --resolve  # Manually resolve unmatched tracks
   python3 spotify_crossref.py --pending  # Like only pending tracks (no searching)
+  python3 spotify_crossref.py --full --force-prematch  # Refetch entire Spotify library for pre-matching
 """
 
 import json
@@ -77,14 +78,30 @@ def normalize(s):
     return s
 
 
+def _levenshtein(a, b):
+    """Compute Levenshtein distance between two strings."""
+    if len(a) < len(b):
+        a, b = b, a
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a):
+        curr = [i + 1]
+        for j, cb in enumerate(b):
+            curr.append(min(prev[j] + (ca != cb), prev[j + 1] + 1, curr[j] + 1))
+        prev = curr
+    return prev[-1]
+
+
 def similarity(a, b):
     na, nb = normalize(a), normalize(b)
-    full = SequenceMatcher(None, na, nb).ratio()
+    max_len = max(len(na), len(nb))
+    if max_len == 0:
+        return 1.0
+    full = 1 - _levenshtein(na, nb) / max_len
     # Also try truncating the longer string to the shorter's length,
     # so "Yesterday" vs "Yesterday - Remastered 2009" scores 1.0.
     min_len = min(len(na), len(nb))
-    if min_len > 0 and max(len(na), len(nb)) > min_len:
-        truncated = SequenceMatcher(None, na[:min_len], nb[:min_len]).ratio()
+    if min_len > 0 and max_len > min_len:
+        truncated = 1 - _levenshtein(na[:min_len], nb[:min_len]) / min_len
         return max(full, truncated)
     return full
 
@@ -134,6 +151,249 @@ def score_items(items, title):
             "title_score": round(score, 3),
         })
     return scored
+
+
+def fetch_liked_songs(sp, existing_spotify_ids=None):
+    """Fetch user's Spotify liked songs with pagination.
+    If existing_spotify_ids is provided, stops early when >=90% of a page
+    already exists (we've reached previously-synced territory)."""
+    liked_songs = []
+    offset = 0
+    limit = 50
+
+    while True:
+        try:
+            results = sp.current_user_saved_tracks(limit=limit, offset=offset)
+        except spotipy.exceptions.SpotifyException as e:
+            if e.http_status == 429:
+                retry_after = get_retry_after(e)
+                print(f"  Rate limited fetching library, waiting {retry_after}s...")
+                time.sleep(retry_after + 5)
+                continue
+            raise
+
+        items = results.get("items", [])
+        if not items:
+            break
+
+        page_songs = []
+        for item in items:
+            track = item["track"]
+            if not track:
+                continue
+            page_songs.append({
+                "spotify_id": track["id"],
+                "spotify_uri": track["uri"],
+                "spotify_name": track["name"],
+                "spotify_artists": ", ".join(a["name"] for a in track["artists"]),
+            })
+
+        liked_songs.extend(page_songs)
+
+        if len(liked_songs) % 500 < limit:
+            print(f"  Fetched {len(liked_songs)} liked songs...")
+
+        # Early-stop: if most of this page is already known, we've reached synced territory
+        if existing_spotify_ids and page_songs:
+            known = sum(1 for s in page_songs if s["spotify_id"] in existing_spotify_ids)
+            if known / len(page_songs) >= 0.9:
+                print(f"  Early stop: reached previously synced tracks ({known}/{len(page_songs)} known on this page)")
+                break
+
+        if not results.get("next"):
+            break
+        offset += limit
+        time.sleep(DELAY_BETWEEN_REQUESTS)
+
+    print(f"  Fetched {len(liked_songs)} liked songs total.")
+    return liked_songs
+
+
+def build_library_index(liked_songs):
+    """Build indexes for fast prematch lookup.
+
+    Returns (title_index, artist_index):
+      - title_index: normalized title -> [song, ...] (includes transliterated keys)
+      - artist_index: normalized artist -> [song, ...] (includes transliterated keys)
+
+    The title index enables O(1) exact-match lookups for ~96% of tracks.
+    The artist index is the fallback for fuzzy similarity matching."""
+    title_index = {}
+    artist_index = {}
+
+    for song in liked_songs:
+        # Title keys: normalized original + transliterated form
+        title_keys = set()
+        norm_title = normalize(song["spotify_name"])
+        title_keys.add(norm_title)
+        translit_title = transliterate_text(song["spotify_name"])
+        if translit_title:
+            title_keys.add(normalize(translit_title))
+        for key in title_keys:
+            if key not in title_index:
+                title_index[key] = []
+            title_index[key].append(song)
+
+        # Artist keys: normalized original + transliterated form
+        artist_names = [a.strip() for a in song["spotify_artists"].split(",")]
+        artist_keys = set()
+        for name in artist_names:
+            artist_keys.add(normalize(name))
+            translit_name = transliterate_text(name)
+            if translit_name:
+                artist_keys.add(normalize(translit_name))
+        for key in artist_keys:
+            if key not in artist_index:
+                artist_index[key] = []
+            artist_index[key].append(song)
+
+    return title_index, artist_index
+
+
+def _match_entry(t, song, title_score, artist_score):
+    """Build a matched prematch entry dict."""
+    return {
+        "yandex_title": t["title"],
+        "yandex_artists": t["artists"],
+        "yandex_id": t["id"],
+        "spotify_id": song["spotify_id"],
+        "spotify_uri": song["spotify_uri"],
+        "spotify_name": song["spotify_name"],
+        "spotify_artists": song["spotify_artists"],
+        "title_score": round(title_score, 3),
+        "artist_score": round(artist_score, 3),
+        "source": "library_prematch",
+    }
+
+
+def _artist_keys_for_track(t):
+    """Return the set of normalized artist lookup keys for a Yandex track."""
+    artist = first_artist(t["artists"])
+    keys = {normalize(artist)}
+    translit_artist = transliterate_text(artist)
+    if translit_artist:
+        keys.add(normalize(translit_artist))
+    return keys
+
+
+def _artist_similarity(t, song):
+    """Compute best artist similarity between a Yandex track and a Spotify song.
+    Tries original and transliterated forms of both sides, returns the max."""
+    yandex_artist = first_artist(t["artists"])
+    yandex_forms = [yandex_artist]
+    tr = transliterate_text(yandex_artist)
+    if tr:
+        yandex_forms.append(tr)
+
+    spotify_artists = [a.strip() for a in song["spotify_artists"].split(",")]
+    spotify_forms = list(spotify_artists)
+    for a in spotify_artists:
+        tr = transliterate_text(a)
+        if tr:
+            spotify_forms.append(tr)
+
+    best = 0
+    for yf in yandex_forms:
+        for sf in spotify_forms:
+            best = max(best, similarity(yf, sf))
+    return best
+
+
+def _title_similarity(t, song):
+    """Compute title similarity between a Yandex track and a Spotify song.
+    Tries original and transliterated forms, returns the max."""
+    title = t["title"]
+    score = similarity(title, song["spotify_name"])
+    translit_title = transliterate_text(title)
+    if translit_title:
+        score = max(score, similarity(translit_title, song["spotify_name"]))
+    return score
+
+
+def _try_title_lookup(t, title_index):
+    """Try O(1) exact title match. Returns (song, artist_score) or (None, 0).
+    Title score is 1.0 by definition (exact match). Artist score must pass threshold."""
+    title_keys = set()
+    title_keys.add(normalize(t["title"]))
+    translit_title = transliterate_text(t["title"])
+    if translit_title:
+        title_keys.add(normalize(translit_title))
+
+    best_song = None
+    best_artist_score = 0
+
+    for tkey in title_keys:
+        for song in title_index.get(tkey, []):
+            ascore = _artist_similarity(t, song)
+            if ascore >= TITLE_MATCH_THRESHOLD and ascore > best_artist_score:
+                best_artist_score = ascore
+                best_song = song
+
+    return best_song, best_artist_score
+
+
+def _try_artist_similarity(t, artist_index):
+    """Fallback: find best match by artist bucket + independent scoring.
+    Returns (song, title_score, artist_score) or (None, 0, 0).
+    Both title and artist scores must be >= threshold."""
+    artist_keys = _artist_keys_for_track(t)
+
+    candidates = []
+    seen_ids = set()
+    for key in artist_keys:
+        for song in artist_index.get(key, []):
+            if song["spotify_id"] not in seen_ids:
+                seen_ids.add(song["spotify_id"])
+                candidates.append(song)
+
+    best_match = None
+    best_combined = 0
+    best_title = 0
+    best_artist = 0
+
+    for song in candidates:
+        tscore = _title_similarity(t, song)
+        ascore = _artist_similarity(t, song)
+        combined = min(tscore, ascore)
+        if combined >= TITLE_MATCH_THRESHOLD and combined > best_combined:
+            best_combined = combined
+            best_title = tscore
+            best_artist = ascore
+            best_match = song
+
+    if best_match:
+        return best_match, best_title, best_artist
+    return None, 0, 0
+
+
+def prematch_from_library(yandex_tracks, title_index, artist_index):
+    """Match Yandex tracks against the Spotify library.
+
+    Two-phase lookup:
+      1. O(1) exact title match via title_index (~96% of matches)
+      2. Fuzzy similarity against artist bucket via artist_index (remainder)
+
+    Both phases require min(title_score, artist_score) >= threshold.
+
+    Returns (matched, unmatched) lists."""
+    matched = []
+    unmatched = []
+
+    for t in yandex_tracks:
+        # Phase 1: exact title lookup
+        song, artist_score = _try_title_lookup(t, title_index)
+        if song:
+            matched.append(_match_entry(t, song, 1.0, artist_score))
+            continue
+
+        # Phase 2: artist-bucket similarity fallback
+        song, title_score, artist_score = _try_artist_similarity(t, artist_index)
+        if song:
+            matched.append(_match_entry(t, song, title_score, artist_score))
+        else:
+            unmatched.append(t)
+
+    return matched, unmatched
 
 
 def search_track(title, artist):
@@ -294,7 +554,7 @@ def flush_pending(found):
 
 # --- Commands ---
 
-def cmd_migrate(test_mode):
+def cmd_migrate(test_mode, force_prematch=False):
     with open(f"{DATA_DIR}/yandex_music_likes.json") as f:
         all_tracks = json.load(f)
 
@@ -318,6 +578,76 @@ def cmd_migrate(test_mode):
     # Reverse order: add last Yandex track first so Spotify liked list mirrors Yandex order
     # (Spotify shows most recently liked at top)
     remaining = [t for t in reversed(all_tracks) if t["id"] not in done_ids]
+
+    # --- Pre-match against existing Spotify library ---
+    if remaining or not_found or pending_on_disk:
+        print("Fetching Spotify liked songs for pre-matching...")
+        existing_spotify_ids = None
+        if found and not force_prematch:
+            existing_spotify_ids = {e["spotify_id"] for e in found if e.get("spotify_id")}
+        liked_songs = fetch_liked_songs(sp, existing_spotify_ids)
+
+        if liked_songs:
+            new_songs = [s for s in liked_songs if s["spotify_id"] not in (existing_spotify_ids or set())]
+            if existing_spotify_ids:
+                print(f"  {len(new_songs)} new tracks in Spotify library since last sync.")
+
+            title_index, artist_index = build_library_index(liked_songs)
+
+            # Prematch remaining yandex tracks
+            prematched_remaining = []
+            if remaining:
+                prematched_remaining, remaining = prematch_from_library(remaining, title_index, artist_index)
+                if prematched_remaining:
+                    found.extend(prematched_remaining)
+                    done_ids.update(e["yandex_id"] for e in prematched_remaining)
+
+            # Prematch not_found entries (user may have liked them on Spotify manually)
+            prematched_not_found = []
+            if not_found:
+                nf_as_yandex = [{"id": e["yandex_id"], "title": e["yandex_title"], "artists": e["yandex_artists"]} for e in not_found]
+                matched_nf, _ = prematch_from_library(nf_as_yandex, title_index, artist_index)
+                if matched_nf:
+                    prematched_not_found = matched_nf
+                    resolved_ids = {e["yandex_id"] for e in matched_nf}
+                    not_found = [e for e in not_found if e["yandex_id"] not in resolved_ids]
+                    found.extend(matched_nf)
+                    done_ids.update(resolved_ids)
+
+            # Prematch pending entries
+            prematched_pending = []
+            if pending_on_disk:
+                pd_as_yandex = [{"id": e["yandex_id"], "title": e["yandex_title"], "artists": e["yandex_artists"]} for e in pending_on_disk]
+                matched_pd, _ = prematch_from_library(pd_as_yandex, title_index, artist_index)
+                if matched_pd:
+                    prematched_pending = matched_pd
+                    resolved_ids = {e["yandex_id"] for e in matched_pd}
+                    pending_on_disk = [e for e in pending_on_disk if e["yandex_id"] not in resolved_ids]
+                    found.extend(matched_pd)
+                    done_ids.update(resolved_ids)
+                    save_pending(pending_on_disk if pending_on_disk else [])
+                    if not pending_on_disk:
+                        clear_pending()
+
+            total_prematched = len(prematched_remaining) + len(prematched_not_found) + len(prematched_pending)
+            if total_prematched:
+                save_found(found)
+                if prematched_not_found:
+                    save_not_found(not_found)
+                parts = []
+                if prematched_remaining:
+                    parts.append(f"{len(prematched_remaining)} from unprocessed")
+                if prematched_not_found:
+                    parts.append(f"{len(prematched_not_found)} from not_found")
+                if prematched_pending:
+                    parts.append(f"{len(prematched_pending)} from pending")
+                print(f"Pre-matched {total_prematched} tracks from existing library ({', '.join(parts)}).")
+                if remaining:
+                    print(f"  {len(remaining)} remaining to search.")
+            else:
+                print("No pre-matches found in existing library.")
+        else:
+            print("No liked songs in Spotify library (or fetch returned empty).")
 
     if len(all_tracks) - len(remaining) > 0:
         print(f"Resuming: {len(all_tracks) - len(remaining)} already processed, {len(remaining)} remaining")
@@ -585,15 +915,16 @@ if __name__ == "__main__":
     parser.add_argument("--resolve", action="store_true", help="Manually resolve unmatched tracks using stored candidates")
     parser.add_argument("--pending", action="store_true", help="Like only pending tracks (no searching)")
     parser.add_argument("--stats", action="store_true", help="Print current migration statistics")
+    parser.add_argument("--force-prematch", action="store_true", help="Refetch entire Spotify library for pre-matching (ignore early-stop)")
     parser.add_argument("--token", help="Yandex Music OAuth token (required for --full-sync)")
     args = parser.parse_args()
 
     if args.test:
-        cmd_migrate(test_mode=True)
+        cmd_migrate(test_mode=True, force_prematch=args.force_prematch)
     elif args.full:
         cmd_stats()
         print()
-        cmd_migrate(test_mode=False)
+        cmd_migrate(test_mode=False, force_prematch=args.force_prematch)
     elif args.full_sync:
         token = args.token or os.environ.get("YANDEX_MUSIC_TOKEN")
         if not token:
@@ -614,4 +945,5 @@ if __name__ == "__main__":
         print("  python3 spotify_crossref.py --full-sync --token TOKEN # Yandex fetch + migrate")
         print("  python3 spotify_crossref.py --resolve                 # Manually pick from stored candidates")
         print("  python3 spotify_crossref.py --stats                   # Print migration statistics")
-        print("  python3 spotify_crossref.py --pending  # Like only pending tracks (no searching)")
+        print("  python3 spotify_crossref.py --pending                 # Like only pending tracks (no searching)")
+        print("  python3 spotify_crossref.py --full --force-prematch   # Refetch full library for pre-matching")
