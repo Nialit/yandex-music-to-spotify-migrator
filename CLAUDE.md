@@ -1,6 +1,37 @@
-# CLAUDE.md
+# Spotify Migration
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+CLI tool to migrate liked tracks and playlists from Yandex Music to Spotify.
+
+<!-- MANAGED BY agents — do not edit this section manually -->
+## Standard Rules
+
+**This section is managed externally by the agents project and synced from the knowledge base.
+Do NOT edit anything here. If you need to override a rule, add it to the OVERRIDE subsection
+below with user permission and a rationale.**
+
+### Memory
+- All persistent memory goes in `memory/` within this repo — not in session-local auto-memory (`~/.claude/projects/`).
+- Do NOT use auto-memory. Do NOT write to `~/.claude/projects/.../memory/`.
+- When asked to "update memory" or "remember this", write to `memory/` files in this repo.
+- Organize memory by topic, not chronologically. Each file has a clear, narrow scope.
+- Keep memory files concise — remove outdated entries rather than appending indefinitely.
+- Do NOT update memory until the user confirms work is complete. Fix first, confirm, then record.
+- Use `/checkpoint` to persist session learnings and sync with knowledge base rules.
+
+### Workflow
+- Read before writing. Always read existing code/files before modifying.
+- Plan commits upfront. Prefer one commit per scope of work over many small ones. Imperative mood. Check for secrets before committing.
+- Fix first → confirm with user → then update memory and commit.
+- Always check official documentation for external APIs — never guess.
+
+### OVERRIDE
+<!-- Local overrides below. Require user approval. Reviewed periodically by agents project. -->
+
+<!-- END MANAGED SECTION -->
+
+## Categories
+<!-- managed by agents project -->
+general, coding
 
 ## Golden Rules
 
@@ -175,8 +206,6 @@ All scripts respect Spotify API rate limits with automatic retry on 429 response
 
 ## Workflow
 
-Squash commits before pushing. Before pushing, always double-check that no confidential data (tokens, secrets, client IDs, personal data) is leaked in the commit.
-
-When working with external APIs (Spotify, Yandex Music, etc.), always check the official documentation first as the source of truth. Do not guess how an API works — fetch and read the actual docs before writing or debugging API calls.
+Squash commits before pushing.
 
 **Always update README.md** when making substantial changes (new features, changed CLI flags, new data files, architectural changes). Keep it in sync with CLAUDE.md — README.md is user-facing, CLAUDE.md is for the AI assistant.
